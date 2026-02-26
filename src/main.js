@@ -59,13 +59,10 @@ window.addEventListener('mousedown', e => {
     const trackHits = raycaster.intersectObjects(trackManager.getTrackMeshes(), false);
     if(trackHits.length > 0) {
         const hit = trackHits[0];
-        const type = hit.object.userData.type;
-        if(type && trackManager.instances[type]) {
-            const track = trackManager.instances[type].tracks[hit.instanceId].t;
-            if(track) {
-                domController.selectTrack(track.id);
-                return;
-            }
+        const trackId = trackManager.getTrackIdFromHit(hit);
+        if (trackId) {
+            domController.selectTrack(trackId);
+            return;
         }
     }
 

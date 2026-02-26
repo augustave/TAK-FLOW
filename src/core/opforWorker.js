@@ -123,57 +123,248 @@ const opforBrain = new Selector([
     new FlankBlueForce()
 ]);
 
-// Memory pool to avoid GC during evaluation
 const tacticalState = {
     hostiles: [],
     friendlies: []
 };
 
-function parseData(rawData) {
-    tacticalState.hostiles.length = 0;
-    tacticalState.friendlies.length = 0;
-    
-    // Format: [x, y, z, id, allegiance]
-    for (let i = 0; i < rawData.length; i += 5) {
-        const x = rawData[i];
-        const y = rawData[i+1];
-        // Note: z = rawData[i+2], unused in 2D top-down logic here
-        const id = rawData[i+3];
-        const allegiance = rawData[i+4];
-        
-        // Zero in x position means padded out/inactive slot in array buffer
-        if (x === 0 && y === 0) continue; 
-
-        if (allegiance === 1) { // 1 = Hostile
-            tacticalState.hostiles.push({ id, x, y, desiredVector: {x: 0, y: 0} });
-        } else if (allegiance === 0) { // 0 = Friendly
-            tacticalState.friendlies.push({ id, x, y });
-        }
-    }
-    return tacticalState;
-}
+const EW_ZONES = [ { x: 0, y: 0, radius: 10.0 } ];
+const emconState = new Map(); // idStr -> { lastX, lastY, entryTime }
+const MAX_VELOCITY = 5.0; // units/sec
 
 // Listen for the Float32Array from the main thread
 self.onmessage = function(e) {
     const rawData = new Float32Array(e.data);
-    const state = parseData(rawData); 
     
-    const responseBuffer = new Float32Array(state.hostiles.length * 4); // [id, vx, vy, vz]
+    tacticalState.hostiles.length = 0;
+    tacticalState.friendlies.length = 0;
     
+    // Format: [id, allegiance, x, y, vx, vy, threat] (Stride = 7)
+    for (let i = 0; i < rawData.length; i += 7) {
+        const id = rawData[i];
+        const allegiance = rawData[i+1];
+        const x = rawData[i+2];
+        const y = rawData[i+3];
+        const vx = rawData[i+4];
+        const vy = rawData[i+5];
+        const threat = rawData[i+6];
+        
+        if (id === 0 && x === 0 && y === 0) continue; 
+
+        if (allegiance === 1.0) { // 1 = Hostile
+            tacticalState.hostiles.push({ id, x, y, vx, vy, threat, desiredVector: {x: 0, y: 0} });
+        } else if (allegiance === 0.0) { // 0 = Friendly
+            tacticalState.friendlies.push({ id, x, y, vx, vy, threat });
+        }
+    }
+    
+    // 1. Behavior Tree Intents
+    const intentsBuffer = new Float32Array(tacticalState.hostiles.length * 4); // [id, vx, vy, vz]
     let wIdx = 0;
-    for (let i = 0; i < state.hostiles.length; i++) {
-        const hostile = state.hostiles[i];
+    
+    // 2. Spatial Hash Clustering for Hostiles
+    const grid = new Map();
+    const CELL_SIZE = 2.5; 
+    
+    for (let h of tacticalState.hostiles) {
+        const cx = Math.floor(h.x / CELL_SIZE);
+        const cy = Math.floor(h.y / CELL_SIZE);
+        const key = `${cx},${cy}`;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(h);
         
-        // Ensure evaluation sets hostile.desiredVector
-        opforBrain.evaluate(hostile, state);
-        
-        // Pack the output vector to send back
-        responseBuffer[wIdx++] = hostile.id;
-        responseBuffer[wIdx++] = hostile.desiredVector.x;
-        responseBuffer[wIdx++] = hostile.desiredVector.y;
-        responseBuffer[wIdx++] = 0.0; // Z
+        opforBrain.evaluate(h, tacticalState);
+        intentsBuffer[wIdx++] = h.id;
+        intentsBuffer[wIdx++] = h.desiredVector.x;
+        intentsBuffer[wIdx++] = h.desiredVector.y;
+        intentsBuffer[wIdx++] = 0.0;
     }
 
-    // Transfer back
-    self.postMessage(responseBuffer.buffer, [responseBuffer.buffer]);
+    const clusteredHostiles = new Set();
+    const centroids = [];
+
+    for (let [key, cell] of grid.entries()) {
+        const [cx, cy] = key.split(',').map(Number);
+        
+        let localHostiles = [];
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const nKey = `${cx+dx},${cy+dy}`;
+                if (grid.has(nKey)) {
+                    for (let h of grid.get(nKey)) {
+                        if (!clusteredHostiles.has(h.id)) localHostiles.push(h);
+                    }
+                }
+            }
+        }
+        
+        if (localHostiles.length > 15) {
+            let polX = 0, polY = 0, validVels = 0;
+            for (let h of localHostiles) {
+                const len = Math.sqrt(h.vx*h.vx + h.vy*h.vy);
+                if (len > 0) {
+                    polX += h.vx / len;
+                    polY += h.vy / len;
+                    validVels++;
+                }
+            }
+            
+            let polarization = 0;
+            if (validVels > 0) {
+                polX /= validVels;
+                polY /= validVels;
+                polarization = Math.sqrt(polX*polX + polY*polY);
+            }
+            
+            if (polarization > 0.85) {
+                let sumX = 0, sumY = 0, sumVx = 0, sumVy = 0, maxThreat = 0;
+                let childIds = [];
+                for (let h of localHostiles) {
+                    sumX += h.x;
+                    sumY += h.y;
+                    sumVx += h.vx;
+                    sumVy += h.vy;
+                    if (h.threat > maxThreat) maxThreat = h.threat;
+                    clusteredHostiles.add(h.id);
+                    childIds.push(h.id);
+                }
+                const count = localHostiles.length;
+                const avgX = sumX / count;
+                const avgY = sumY / count;
+                
+                let maxSq = 0;
+                for (let h of localHostiles) {
+                    const dx = h.x - avgX;
+                    const dy = h.y - avgY;
+                    const distSq = dx*dx + dy*dy;
+                    if (distSq > maxSq) maxSq = distSq;
+                }
+                const radius = Math.sqrt(maxSq) + 0.5;
+                
+                centroids.push({
+                    id: localHostiles[0].id, 
+                    x: avgX, y: avgY, 
+                    vx: sumVx / count, vy: sumVy / count,
+                    radius: radius, 
+                    count: count, 
+                    threat: maxThreat,
+                    childIds: childIds
+                });
+            }
+        }
+    }
+
+    // 3. Output Render Buffer Schema (Stride = 10)
+    const STRIDE = 10;
+    const discreteCount = tacticalState.hostiles.length - clusteredHostiles.size;
+    const totalRenderCount = discreteCount + centroids.length;
+    
+    const renderingBuffer = new Float32Array(totalRenderCount * STRIDE);
+    let ptr = 0;
+    const now = performance.now();
+    const emconAlerts = [];
+    
+    for (let c of centroids) {
+        let isEmcon = false;
+        for (let z of EW_ZONES) {
+            const dx = c.x - z.x, dy = c.y - z.y;
+            if (dx*dx + dy*dy < z.radius * z.radius) { isEmcon = true; break; }
+        }
+        
+        const idStr = 'C' + c.id;
+        
+        if (isEmcon) {
+            if (!emconState.has(idStr)) emconState.set(idStr, { lastX: c.x, lastY: c.y, entryTime: now });
+            const state = emconState.get(idStr);
+            const timeLossSec = (now - state.entryTime) / 1000.0;
+            const ghostRadius = c.radius + (MAX_VELOCITY * timeLossSec);
+            
+            renderingBuffer[ptr] = c.id;
+            renderingBuffer[ptr+1] = 2.0; // EMCON Ghost
+            renderingBuffer[ptr+2] = state.lastX;
+            renderingBuffer[ptr+3] = state.lastY;
+            renderingBuffer[ptr+4] = 0.0;
+            renderingBuffer[ptr+5] = Math.atan2(c.vy, c.vx) + Math.PI / 2;
+            renderingBuffer[ptr+6] = Math.sqrt(c.vx*c.vx + c.vy*c.vy);
+            renderingBuffer[ptr+7] = ghostRadius;
+            renderingBuffer[ptr+8] = c.count;
+            renderingBuffer[ptr+9] = Math.max(0, c.threat * (1.0 - timeLossSec/10.0));
+            
+            emconAlerts.push({ id: `CENTROID-${c.id}`, radius: ghostRadius });
+        } else {
+            emconState.delete(idStr);
+            renderingBuffer[ptr] = c.id;
+            renderingBuffer[ptr+1] = 1.0; // Swarm Centroid
+            renderingBuffer[ptr+2] = c.x;
+            renderingBuffer[ptr+3] = c.y;
+            renderingBuffer[ptr+4] = 0.0;
+            renderingBuffer[ptr+5] = Math.atan2(c.vy, c.vx) + Math.PI / 2;
+            renderingBuffer[ptr+6] = Math.sqrt(c.vx*c.vx + c.vy*c.vy);
+            renderingBuffer[ptr+7] = c.radius;
+            renderingBuffer[ptr+8] = c.count;
+            renderingBuffer[ptr+9] = c.threat;
+        }
+        ptr += STRIDE;
+    }
+    
+    for (let h of tacticalState.hostiles) {
+        if (!clusteredHostiles.has(h.id)) {
+            let isEmcon = false;
+            for (let z of EW_ZONES) {
+                const dx = h.x - z.x, dy = h.y - z.y;
+                if (dx*dx + dy*dy < z.radius * z.radius) { isEmcon = true; break; }
+            }
+            
+            const idStr = 'T' + h.id;
+            
+            if (isEmcon) {
+                if (!emconState.has(idStr)) emconState.set(idStr, { lastX: h.x, lastY: h.y, entryTime: now });
+                const state = emconState.get(idStr);
+                const timeLossSec = (now - state.entryTime) / 1000.0;
+                const ghostRadius = 0.5 + (MAX_VELOCITY * timeLossSec); // Base radius 0.5 for discrete
+                
+                renderingBuffer[ptr] = h.id;
+                renderingBuffer[ptr+1] = 2.0; // EMCON Ghost
+                renderingBuffer[ptr+2] = state.lastX;
+                renderingBuffer[ptr+3] = state.lastY;
+                renderingBuffer[ptr+4] = 0.0;
+                renderingBuffer[ptr+5] = Math.atan2(h.vy, h.vx) + Math.PI / 2;
+                renderingBuffer[ptr+6] = Math.sqrt(h.vx*h.vx + h.vy*h.vy);
+                renderingBuffer[ptr+7] = ghostRadius;
+                renderingBuffer[ptr+8] = 1;
+                renderingBuffer[ptr+9] = Math.max(0, h.threat * (1.0 - timeLossSec/10.0));
+                
+                emconAlerts.push({ id: `SW-${h.id}`, radius: ghostRadius });
+            } else {
+                emconState.delete(idStr);
+                renderingBuffer[ptr] = h.id;
+                renderingBuffer[ptr+1] = 0.0; // Discrete Track
+                renderingBuffer[ptr+2] = h.x;
+                renderingBuffer[ptr+3] = h.y;
+                renderingBuffer[ptr+4] = 0.0;
+                renderingBuffer[ptr+5] = Math.atan2(h.vy, h.vx) + Math.PI / 2;
+                renderingBuffer[ptr+6] = Math.sqrt(h.vx*h.vx + h.vy*h.vy);
+                renderingBuffer[ptr+7] = 0.0;
+                renderingBuffer[ptr+8] = 1;
+                renderingBuffer[ptr+9] = h.threat;
+            }
+            ptr += STRIDE;
+        }
+    }
+
+    const uiMetadata = {
+        centroids: centroids.map(c => ({
+            id: c.id,
+            count: c.count,
+            radius: c.radius,
+            childIds: c.childIds
+        })),
+        emcon: emconAlerts
+    };
+
+    self.postMessage({
+        render: renderingBuffer.buffer, 
+        intents: intentsBuffer.buffer,
+        ui: uiMetadata
+    }, [renderingBuffer.buffer, intentsBuffer.buffer]);
 };

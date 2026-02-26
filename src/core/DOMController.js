@@ -262,33 +262,69 @@ export class DOMController {
         const prov = this.trackManager.getProvenance(track.id);
         document.getElementById('at-id').textContent = track.id + ' / ' + track.subtype;
         
-        const brg = (Math.atan2(track.x, track.y) * 180 / Math.PI + 360) % 360;
-        const rng = Math.sqrt(track.x * track.x + track.y * track.y).toFixed(1);
-        document.getElementById('at-kinematics').textContent = `${brg.toFixed(0).padStart(3,'0')}° / ${rng}km / ${track.spd}kt`;
-        document.getElementById('at-source').textContent = prov.source;
+        let isEmcon = false;
+        let emconRadius = 0;
         
-        const confEl = document.getElementById('at-confidence');
-        confEl.textContent = prov.confidence;
-        confEl.className = 'data-value ' + (prov.confidence === 'HIGH' ? 'green' : (prov.confidence === 'MEDIUM' ? 'amber' : 'red'));
+        if (this.trackManager.latestEmconMetadata) {
+            const emconData = this.trackManager.latestEmconMetadata.find(e => 
+                e.id === track.id || 
+                e.id === `SW-${track.id}` || 
+                e.id === `CENTROID-${track.id}` ||
+                e.realId === track.id
+            );
+            if (emconData) {
+                isEmcon = true;
+                emconRadius = emconData.radius;
+            }
+        }
         
-        const ageSeconds = Math.floor((Date.now() - prov.lastUpdate) / 1000);
-        const ageEl = document.getElementById('at-age');
-        ageEl.textContent = ageSeconds + 's';
-        
-        const badgeEl = document.getElementById('at-provenance-badge');
-        if(ageSeconds > 120) {
-            ageEl.textContent += ' [STALE]';
-            ageEl.className = 'data-value red';
-            badgeEl.textContent = 'STALE';
+        if (isEmcon) {
+            document.getElementById('at-kinematics').textContent = `[ PROBABILISTIC / EMCON ] R: ${emconRadius.toFixed(2)}km`;
+            document.getElementById('at-source').textContent = 'EXTRAPOLATED';
+            
+            const confEl = document.getElementById('at-confidence');
+            confEl.textContent = 'LOW / DEGRADED';
+            confEl.className = 'data-value amber';
+            
+            const ageEl = document.getElementById('at-age');
+            ageEl.textContent = '--';
+            ageEl.className = 'data-value amber';
+            
+            const badgeEl = document.getElementById('at-provenance-badge');
+            badgeEl.textContent = 'EMCON ALERT';
             badgeEl.className = 'panel-badge badge-alert';
-            this.atLockStatusEl.textContent = 'LOCK / STALE';
+            
+            this.atLockStatusEl.textContent = 'DATALINK SEVERED';
             this.atLockStatusEl.className = 'data-value amber';
         } else {
-            ageEl.className = 'data-value';
-            badgeEl.textContent = 'TRACKING';
-            badgeEl.className = 'panel-badge badge-nominal';
-            this.atLockStatusEl.textContent = 'LOCKED ON';
-            this.atLockStatusEl.className = 'data-value cyan';
+            const brg = (Math.atan2(track.x, track.y) * 180 / Math.PI + 360) % 360;
+            const rng = Math.sqrt(track.x * track.x + track.y * track.y).toFixed(1);
+            document.getElementById('at-kinematics').textContent = `${brg.toFixed(0).padStart(3,'0')}° / ${rng}km / ${track.spd}kt`;
+            document.getElementById('at-source').textContent = prov.source;
+            
+            const confEl = document.getElementById('at-confidence');
+            confEl.textContent = prov.confidence;
+            confEl.className = 'data-value ' + (prov.confidence === 'HIGH' ? 'green' : (prov.confidence === 'MEDIUM' ? 'amber' : 'red'));
+            
+            const ageSeconds = Math.floor((Date.now() - prov.lastUpdate) / 1000);
+            const ageEl = document.getElementById('at-age');
+            ageEl.textContent = ageSeconds + 's';
+            
+            const badgeEl = document.getElementById('at-provenance-badge');
+            if(ageSeconds > 120) {
+                ageEl.textContent += ' [STALE]';
+                ageEl.className = 'data-value red';
+                badgeEl.textContent = 'STALE';
+                badgeEl.className = 'panel-badge badge-alert';
+                this.atLockStatusEl.textContent = 'LOCK / STALE';
+                this.atLockStatusEl.className = 'data-value amber';
+            } else {
+                ageEl.className = 'data-value';
+                badgeEl.textContent = 'TRACKING';
+                badgeEl.className = 'panel-badge badge-nominal';
+                this.atLockStatusEl.textContent = 'LOCKED ON';
+                this.atLockStatusEl.className = 'data-value cyan';
+            }
         }
 
         const dest = this.trackManager.getDestination(track.id);

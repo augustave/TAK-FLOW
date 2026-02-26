@@ -38,6 +38,13 @@ export class TrackManager {
             unknown: { mesh: null, tracks: [] }
         };
 
+        this.workerPending = false;
+        this.latestRenderingBuffer = null;
+        this.latestUiMetadata = null;
+        this.hiddenTrackIds = new Set();
+        this.centroidIdMap = {};
+        this.hostileIdMap = {};
+
         // Phase 12 Dynamical System Validation Harness
         this.swarmTelemetry = {
             polarization: 0,
@@ -55,17 +62,67 @@ export class TrackManager {
 
     initOpforWorker() {
         this.opforWorker = new Worker('src/core/opforWorker.js', { type: 'module' });
+        this.workerPending = false;
         
         this.opforWorker.onmessage = (e) => {
-            const updatedIntents = new Float32Array(e.data);
-            this.applyOpforIntents(updatedIntents);
-        };
+            this.workerPending = false;
+            if (e.data.intents) {
+                this.applyOpforIntents(new Float32Array(e.data.intents));
+            }
+            if (e.data.render) {
+                this.latestRenderingBuffer = new Float32Array(e.data.render);
+            }
+            if (e.data.ui) {
+                this.updateUiSwarms(e.data.ui.centroids || []);
+                this.latestEmconMetadata = e.data.ui.emcon || [];
+                
+                this.latestEmconMetadata.forEach(emconData => {
+                    if (emconData.id.startsWith('SW-')) {
+                        const rawId = parseInt(emconData.id.substring(3));
+                        const tr = this.instances['hostile']?.tracks[rawId];
+                        if (tr && tr.t && tr.t.id) emconData.realId = tr.t.id;
+                    } else if (emconData.id.startsWith('CENTROID-')) {
+                        const rawId = parseInt(emconData.id.substring(9));
+                        emconData.realId = 'C-' + rawId;
+                    }
+                });
 
-        // Tick the intelligence at 2Hz
-        setInterval(() => this.sendStateToWorker(), 500);
+                if (this.latestEmconMetadata.length > 0 && window.opsLogInstance) {
+                    if (!this.emconLogs) this.emconLogs = new Set();
+                    this.latestEmconMetadata.forEach(emconData => {
+                        if (!this.emconLogs.has(emconData.id)) {
+                            this.emconLogs.add(emconData.id);
+                            const displayId = emconData.realId ? (typeof emconData.realId === 'number' ? 'TK-' + emconData.realId : emconData.realId) : emconData.id;
+                            window.opsLogInstance.addEntry('WARNING', `[EW ALERT]`, `TRACK ${displayId} DATALINK SEVERED. INITIATING KINEMATIC EXTRAPOLATION.`, 2, 45);
+                        }
+                    });
+                }
+            }
+        };
+    }
+
+    updateUiSwarms(uiMetadata) {
+        this.hiddenTrackIds = new Set();
+        uiMetadata.forEach(c => {
+            c.childIds.forEach(id => this.hiddenTrackIds.add(id));
+            if (window.opsLogInstance) {
+                const logKey = `CENTROID-${c.id}`;
+                if (!this.centroidLogs) this.centroidLogs = new Set();
+                if (!this.centroidLogs.has(logKey)) {
+                    this.centroidLogs.add(logKey);
+                    window.opsLogInstance.addEntry('CRITICAL', `[SWARM-CENTROID]`, `${c.count} TRACKS - HIGH COHESION DETECTED`, 1, 30);
+                }
+            }
+        });
+        
+        this.trackData.forEach(t => {
+            const numId = parseInt(t.id.replace(/\D/g, '')) || 0;
+            t.isHiddenByCentroid = this.hiddenTrackIds.has(numId);
+        });
     }
 
     sendStateToWorker() {
+        if (this.workerPending) return;
         const swarms = [];
         Object.values(this.instances).forEach(inst => {
             inst.tracks.forEach(tr => {
@@ -75,27 +132,24 @@ export class TrackManager {
 
         if (swarms.length === 0) return;
 
-        // 5 floats per track: [x, y, z, id, allegiance]
-        const buffer = new Float32Array(swarms.length * 5);
+        const buffer = new Float32Array(swarms.length * 7);
         let idx = 0;
 
         for (let i = 0; i < swarms.length; i++) {
             const item = swarms[i];
             const tr = item.tr;
             
-            buffer[idx++] = tr.pos.x;
-            buffer[idx++] = tr.pos.y;
-            buffer[idx++] = 0.0; // Z
-            
-            // Extract numeric ID (e.g., "SW-1456" -> 1456)
             const numId = parseInt(tr.t.id.replace(/\D/g, '')) || 0;
             buffer[idx++] = numId;
-            
-            // Allegiance: 1 for hostile, 0 for friendly
-            buffer[idx++] = item.type === 'hostile' ? 1.0 : 0.0;
+            buffer[idx++] = item.type === 'hostile' ? 1.0 : (item.type === 'friendly' ? 0.0 : 2.0);
+            buffer[idx++] = tr.pos.x;
+            buffer[idx++] = tr.pos.y;
+            buffer[idx++] = tr.vel ? tr.vel.x : 0.0;
+            buffer[idx++] = tr.vel ? tr.vel.y : 0.0;
+            buffer[idx++] = tr.t.threat_level === 'HIGH' ? 1.0 : (tr.t.threat_level === 'MEDIUM' ? 0.5 : 0.0);
         }
 
-        // Transfer ownership of the buffer array directly (Zero-Copy)
+        this.workerPending = true;
         this.opforWorker.postMessage(buffer.buffer, [buffer.buffer]);
     }
 
@@ -161,11 +215,52 @@ export class TrackManager {
                 dummy.updateMatrix();
                 inst.mesh.setMatrixAt(i, dummy.matrix);
             }
-            // inst.mesh.geometry.computeBoundingSphere();
-            // inst.mesh.geometry.computeBoundingBox();
-
             this.overlayGroup.add(inst.mesh);
         });
+
+        const centroidGeo = new THREE.RingGeometry(0.8, 1.0, 32);
+        const centroidMat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+        this.centroidMesh = new THREE.InstancedMesh(centroidGeo, centroidMat, 50); // max 50 centroids
+        this.centroidMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this.centroidMesh.count = 0;
+        this.centroidMesh.userData = { isTrackInstancedMesh: true, type: 'centroid' };
+        this.overlayGroup.add(this.centroidMesh);
+
+        const emconFS = `
+            varying vec2 vUv;
+            uniform float uTime;
+            void main() {
+                float d = distance(vUv, vec2(0.5));
+                if (d > 0.5) discard;
+                float pulse = (sin(uTime * 3.0 - d * 15.0) + 1.0) * 0.5;
+                float alpha = (1.0 - (d * 2.0)) * (0.3 + 0.4 * pulse);
+                vec3 color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.2, 0.2), 1.0 - (d * 2.0));
+                gl_FragColor = vec4(color, alpha);
+            }
+        `;
+        const emconVS = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                vec4 mvPosition = viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+        this.emconMaterial = new THREE.ShaderMaterial({
+            fragmentShader: emconFS,
+            vertexShader: emconVS,
+            uniforms: { uTime: { value: 0 } },
+            transparent: true,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        
+        const emconGeo = new THREE.PlaneGeometry(2, 2);
+        this.emconMesh = new THREE.InstancedMesh(emconGeo, this.emconMaterial, 2000);
+        this.emconMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this.emconMesh.count = 0;
+        this.emconMesh.userData = { isTrackInstancedMesh: true, type: 'emcon' };
+        this.overlayGroup.add(this.emconMesh);
 
         this.setupSelectionVisuals();
     }
@@ -217,6 +312,24 @@ export class TrackManager {
             }
             inst.tracks = [];
         });
+
+        if (this.centroidMesh) {
+            this.overlayGroup.remove(this.centroidMesh);
+            this.centroidMesh.geometry.dispose();
+            this.centroidMesh.material.dispose();
+            this.centroidMesh = null;
+        }
+
+        if (this.emconMesh) {
+            this.overlayGroup.remove(this.emconMesh);
+            this.emconMesh.geometry.dispose();
+            this.emconMesh.material.dispose();
+            this.emconMesh = null;
+            if (this.emconMaterial) {
+                this.emconMaterial.dispose();
+                this.emconMaterial = null;
+            }
+        }
         
         if (window.store) {
             window.store.set('selectedTrackId', null);
@@ -231,7 +344,7 @@ export class TrackManager {
     }
 
     getTrackData() {
-        return this.trackData;
+        return this.trackData.filter(t => !t.isHiddenByCentroid);
     }
 
     getSwarmTelemetry() {
@@ -239,7 +352,25 @@ export class TrackManager {
     }
 
     getTrackMeshes() {
-        return Object.values(this.instances).map(inst => inst.mesh).filter(m => m !== null);
+        const meshes = Object.values(this.instances).map(inst => inst.mesh).filter(m => m !== null);
+        if (this.centroidMesh) meshes.push(this.centroidMesh);
+        if (this.emconMesh) meshes.push(this.emconMesh);
+        return meshes;
+    }
+
+    getTrackIdFromHit(hit) {
+        const type = hit.object.userData.type;
+        if (type === 'emcon') {
+            return this.emconIdMap ? this.emconIdMap[hit.instanceId] : null;
+        } else if (type === 'centroid') {
+            return this.centroidIdMap ? this.centroidIdMap[hit.instanceId] : null;
+        } else if (type === 'hostile') {
+            return this.hostileIdMap ? this.hostileIdMap[hit.instanceId] : null;
+        } else if (this.instances[type]) {
+            const tr = this.instances[type].tracks[hit.instanceId];
+            return tr ? tr.t.id : null;
+        }
+        return null;
     }
 
     getProvenance(id) {
@@ -482,8 +613,13 @@ export class TrackManager {
         const dt = Math.min(t - this.lastTime, 0.1);
         this.lastTime = t;
 
+        if (this.emconMaterial) {
+            this.emconMaterial.uniforms.uTime.value = t;
+        }
+
         if (dt > 0 && effectiveMotion > 0) {
             this.updateSwarmBoids(dt * effectiveMotion);
+            this.sendStateToWorker();
         }
 
         const dummy = new THREE.Object3D();
@@ -496,78 +632,202 @@ export class TrackManager {
             
             inst.mesh.material.opacity = 0.82 * (1 - skinVal);
             
-            const color = new THREE.Color();
-            
-            for(let i = 0; i < inst.tracks.length; i++) {
-                const tr = inst.tracks[i];
-                let px, py;
-                
-                if (tr.isSwarm) {
-                    px = tr.pos.x;
-                    py = tr.pos.y;
-                } else {
-                    const drift = tr.t.spd > 0 ? 0.3 : 0.05;
-                    px = tr.baseX + Math.sin(t * 0.3 + tr.offset) * drift * 3;
-                    py = tr.baseY + Math.cos(t * 0.25 + tr.offset) * drift * 3;
-                    tr.pos.set(px, py); // Keep pos updated for potential interactions
-                }
-                
-                let timeAngle;
-                if (tr.isSwarm) {
-                    // Geometry tip points down (0, -0.6), so align with velocity vector + 90 degrees
-                    timeAngle = Math.atan2(tr.vel.y, tr.vel.x) + Math.PI / 2;
-                } else {
-                    timeAngle = t * 0.8 * Math.max(effectiveMotion, 0.08) + tr.offset;
-                }
-                
-                dummy.position.set(px, py, 0.2);
-                dummy.rotation.set(0, 0, timeAngle);
-                
-                const isSelected = tr.t.id === selectedId;
-                const sc = isSelected ? 1.15 + Math.sin(t * 3 + tr.offset) * 0.12 : 1 + Math.sin(t * 2 + tr.offset) * 0.15;
-                dummy.scale.setScalar(sc);
-                
-                // Urgency Encoding: High Threat & < 60s
-                if (effectiveMotion > 0) {
-                    tr.t.time_to_event_seconds = Math.max(0, tr.t.time_to_event_seconds - dt * effectiveMotion);
-                }
-                
-                if (tr.t.threat_level === 'HIGH' && tr.t.time_to_event_seconds < 60) {
-                    if (!tr.alerted && window.opsLogInstance) {
-                        tr.alerted = true;
-                        window.opsLogInstance.addEntry('CRITICAL', tr.t.id, `HIGH THREAT IMMINENT: T-MINUS ${Math.floor(tr.t.time_to_event_seconds)}s`, 2, tr.t.time_to_event_seconds);
+            if (type !== 'hostile') {
+                const color = new THREE.Color();
+                for(let i = 0; i < inst.tracks.length; i++) {
+                    const tr = inst.tracks[i];
+                    let px, py;
+                    
+                    if (tr.isSwarm) {
+                        px = tr.pos.x;
+                        py = tr.pos.y;
+                    } else {
+                        const drift = tr.t.spd > 0 ? 0.3 : 0.05;
+                        px = tr.baseX + Math.sin(t * 0.3 + tr.offset) * drift * 3;
+                        py = tr.baseY + Math.cos(t * 0.25 + tr.offset) * drift * 3;
+                        tr.pos.set(px, py); // Keep pos updated for potential interactions
                     }
-                    // Fast pulsing red/white
-                    const urgentPulse = (Math.sin(t * 15 + tr.offset) + 1) * 0.5;
-                    color.setHex(urgentPulse > 0.5 ? 0xffffff : 0xff0000);
-                    inst.mesh.setColorAt(i, color);
-                } else {
-                    inst.mesh.setColorAt(i, this.typeColors[type]);
-                }
-                
-                dummy.updateMatrix();
-                inst.mesh.setMatrixAt(i, dummy.matrix);
-                
-                if (isSelected) {
-                    selectedTrackData = tr.t;
-                    selectedTrackPos = { x: px, y: py };
                     
-                    this.selectionGroup.position.set(px, py, 0.2);
-                    this.selectionGroup.scale.setScalar(sc);
+                    let timeAngle;
+                    if (tr.isSwarm) {
+                        timeAngle = Math.atan2(tr.vel.y, tr.vel.x) + Math.PI / 2;
+                    } else {
+                        timeAngle = t * 0.8 * Math.max(effectiveMotion, 0.08) + tr.offset;
+                    }
                     
-                    const pulse = (Math.sin(t * 7) + 1) * 0.5;
-                    this.lockRing.material.opacity = (0.18 + pulse * 0.35) * (1 - skinVal);
-                    this.lockRing.scale.setScalar(1.0 + pulse * 0.28);
-                    this.bracketLine.material.opacity = 1.0 * (1 - skinVal);
-                    this.bracketLine.material.color = this.typeColors[type];
+                    dummy.position.set(px, py, 0.2);
+                    dummy.rotation.set(0, 0, timeAngle);
+                    
+                    const isSelected = tr.t.id === selectedId;
+                    const sc = isSelected ? 1.15 + Math.sin(t * 3 + tr.offset) * 0.12 : 1 + Math.sin(t * 2 + tr.offset) * 0.15;
+                    dummy.scale.setScalar(sc);
+                    
+                    if (effectiveMotion > 0) {
+                        tr.t.time_to_event_seconds = Math.max(0, tr.t.time_to_event_seconds - dt * effectiveMotion);
+                    }
+                    
+                    if (tr.t.threat_level === 'HIGH' && tr.t.time_to_event_seconds < 60) {
+                        if (!tr.alerted && window.opsLogInstance) {
+                            tr.alerted = true;
+                            window.opsLogInstance.addEntry('CRITICAL', tr.t.id, `HIGH THREAT IMMINENT: T-MINUS ${Math.floor(tr.t.time_to_event_seconds)}s`, 2, tr.t.time_to_event_seconds);
+                        }
+                        const urgentPulse = (Math.sin(t * 15 + tr.offset) + 1) * 0.5;
+                        color.setHex(urgentPulse > 0.5 ? 0xffffff : 0xff0000);
+                        inst.mesh.setColorAt(i, color);
+                    } else {
+                        inst.mesh.setColorAt(i, this.typeColors[type]);
+                    }
+                    
+                    dummy.updateMatrix();
+                    inst.mesh.setMatrixAt(i, dummy.matrix);
+                    
+                    if (isSelected) {
+                        selectedTrackData = tr.t;
+                        selectedTrackPos = { x: px, y: py };
+                        
+                        this.selectionGroup.position.set(px, py, 0.2);
+                        this.selectionGroup.scale.setScalar(sc);
+                        
+                        const pulse = (Math.sin(t * 7) + 1) * 0.5;
+                        this.lockRing.material.opacity = (0.18 + pulse * 0.35) * (1 - skinVal);
+                        this.lockRing.scale.setScalar(1.0 + pulse * 0.28);
+                        this.bracketLine.material.opacity = 1.0 * (1 - skinVal);
+                        this.bracketLine.material.color = this.typeColors[type];
+                    }
                 }
-            }
-            inst.mesh.instanceMatrix.needsUpdate = true;
-            if (inst.mesh.instanceColor) inst.mesh.instanceColor.needsUpdate = true;
-            if(inst.mesh.geometry.boundingSphere === null) {
-                inst.mesh.geometry.computeBoundingSphere();
+                inst.mesh.instanceMatrix.needsUpdate = true;
+                if (inst.mesh.instanceColor) inst.mesh.instanceColor.needsUpdate = true;
+                if(inst.mesh.geometry.boundingSphere === null) {
+                    inst.mesh.geometry.computeBoundingSphere();
+                }
+            } else {
+                for(let i = 0; i < inst.tracks.length; i++) {
+                    const tr = inst.tracks[i];
+                    if (!tr.isSwarm) {
+                        const drift = tr.t.spd > 0 ? 0.3 : 0.05;
+                        tr.pos.x = tr.baseX + Math.sin(t * 0.3 + tr.offset) * drift * 3;
+                        tr.pos.y = tr.baseY + Math.cos(t * 0.25 + tr.offset) * drift * 3;
+                    }
+                }
             }
         });
+
+        // Render Spatial Hash Data for Hostiles and Centroids
+        if (this.latestRenderingBuffer && this.centroidMesh && this.instances.hostile.mesh && this.emconMesh) {
+            let discreteCount = 0;
+            let centroidCount = 0;
+            let emconCount = 0;
+            this.centroidMesh.material.opacity = 0.9 * (1 - skinVal);
+            
+            const buffer = this.latestRenderingBuffer;
+            const STRIDE = 10;
+            const color = new THREE.Color();
+            
+            this.hostileIdMap = {};
+            this.centroidIdMap = {};
+            this.emconIdMap = {};
+
+            for (let i = 0; i < buffer.length; i += STRIDE) {
+                const id = buffer[i];
+                const entityType = buffer[i+1];
+                const x = buffer[i+2];
+                const y = buffer[i+3];
+                const yaw = buffer[i+5];
+                const radius = buffer[i+7];
+                const threat = buffer[i+9];
+
+                dummy.position.set(x, y, 0.2);
+                dummy.rotation.set(0, 0, yaw);
+                
+                const isCentroid = entityType === 1.0;
+                const isEmcon = entityType === 2.0;
+                
+                let strId = `SW-${id}`;
+                if (isCentroid) strId = `CENTROID-${id}`;
+                else if (isEmcon && this.latestEmconMetadata) {
+                    const emconData = this.latestEmconMetadata.find(e => parseInt(e.id.replace(/\D/g, '')) === id);
+                    if (emconData) strId = emconData.id;
+                }
+                
+                const isSelected = strId === selectedId;
+
+                const baseSc = isSelected ? 1.15 + Math.sin(t * 3) * 0.12 : 1 + Math.sin(t * 2) * 0.15;
+                
+                if (isEmcon) {
+                    this.emconIdMap[emconCount] = strId;
+                    dummy.scale.setScalar(radius);
+                    dummy.updateMatrix();
+                    this.emconMesh.setMatrixAt(emconCount, dummy.matrix);
+                    
+                    if (isSelected) {
+                        selectedTrackPos = { x, y };
+                        this.selectionGroup.position.set(x, y, 0.2);
+                        this.selectionGroup.scale.setScalar(radius * 1.5);
+                        
+                        this.lockRing.visible = false;
+                        this.bracketLine.material.color = new THREE.Color(0xff8800);
+                        this.bracketLine.material.opacity = 0.5 * (1 - skinVal);
+                    }
+                    emconCount++;
+                } else if (!isCentroid) {
+                    this.hostileIdMap[discreteCount] = strId;
+                    dummy.scale.setScalar(baseSc);
+                    if (threat > 0.8) {
+                        const urgentPulse = (Math.sin(t * 15) + 1) * 0.5;
+                        color.setHex(urgentPulse > 0.5 ? 0xffffff : 0xff0000);
+                        this.instances.hostile.mesh.setColorAt(discreteCount, color);
+                    } else {
+                        this.instances.hostile.mesh.setColorAt(discreteCount, this.typeColors.hostile);
+                    }
+                    
+                    dummy.updateMatrix();
+                    this.instances.hostile.mesh.setMatrixAt(discreteCount, dummy.matrix);
+                    
+                    if (isSelected) {
+                        selectedTrackPos = { x, y };
+                        this.selectionGroup.position.set(x, y, 0.2);
+                        this.selectionGroup.scale.setScalar(baseSc);
+                        
+                        const pulse = (Math.sin(t * 7) + 1) * 0.5;
+                        this.lockRing.material.opacity = (0.18 + pulse * 0.35) * (1 - skinVal);
+                        this.lockRing.scale.setScalar(1.0 + pulse * 0.28);
+                        this.bracketLine.material.opacity = 1.0 * (1 - skinVal);
+                        this.bracketLine.material.color = this.typeColors.hostile;
+                        this.lockRing.visible = true;
+                    }
+                    discreteCount++;
+                } else {
+                    this.centroidIdMap[centroidCount] = strId;
+                    dummy.scale.setScalar((radius * 0.8) + (Math.sin(t * 4) * 0.15));
+                    dummy.updateMatrix();
+                    this.centroidMesh.setMatrixAt(centroidCount, dummy.matrix);
+                    
+                    if (isSelected) {
+                        selectedTrackPos = { x, y };
+                        this.selectionGroup.position.set(x, y, 0.2);
+                        this.selectionGroup.scale.setScalar(radius * 1.5);
+                        
+                        this.lockRing.visible = false;
+                        this.bracketLine.material.color = new THREE.Color(0xff3333);
+                        this.bracketLine.material.opacity = 1.0 * (1 - skinVal);
+                    }
+                    centroidCount++;
+                }
+            }
+
+            this.instances.hostile.mesh.count = discreteCount;
+            this.instances.hostile.mesh.instanceMatrix.needsUpdate = true;
+            if (this.instances.hostile.mesh.instanceColor) this.instances.hostile.mesh.instanceColor.needsUpdate = true;
+            if (this.instances.hostile.mesh.geometry.boundingSphere === null) this.instances.hostile.mesh.geometry.computeBoundingSphere();
+
+            this.centroidMesh.count = centroidCount;
+            this.centroidMesh.instanceMatrix.needsUpdate = true;
+            if (this.centroidMesh.geometry.boundingSphere === null) this.centroidMesh.geometry.computeBoundingSphere();
+            
+            this.emconMesh.count = emconCount;
+            this.emconMesh.instanceMatrix.needsUpdate = true;
+            if (this.emconMesh.geometry.boundingSphere === null) this.emconMesh.geometry.computeBoundingSphere();
+        }
 
         if (!selectedId || !selectedTrackPos) {
             this.selectionGroup.visible = false;
