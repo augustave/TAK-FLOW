@@ -131,10 +131,86 @@ const tacticalState = {
 const EW_ZONES = [ { x: 0, y: 0, radius: 10.0 } ];
 const emconState = new Map(); // idStr -> { lastX, lastY, entryTime }
 const MAX_VELOCITY = 5.0; // units/sec
+const EMCON_CONFIDENCE_DECAY_PER_SEC = 0.01;
+const EMCON_LOST_CONFIDENCE_THRESHOLD = 0.05;
+const EMCON_MAX_RADIUS_KM = 20.0;
+const lostTrackNotified = new Set();
+const ghostTracks = new Map(); // numericId -> { id, x, y, yaw, confidence, expiresAt }
+let nextGhostId = -1;
+let lastDecoyBurstCount = 0;
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function maybeEmitTrackLost(trackId) {
+    if (lostTrackNotified.has(trackId)) return;
+    lostTrackNotified.add(trackId);
+    self.postMessage({ type: 'TRACK_LOST', id: trackId });
+}
+
+function getOrCreateEmconState(idStr, x, y, now, initialConfidence) {
+    if (!emconState.has(idStr)) {
+        emconState.set(idStr, {
+            lastX: x,
+            lastY: y,
+            entryTime: now,
+            lastUpdateTs: now,
+            confidence: clamp(initialConfidence, 0, 1)
+        });
+    }
+    return emconState.get(idStr);
+}
+
+function decayEmconConfidence(state, now) {
+    const deltaSec = Math.max(0, (now - state.lastUpdateTs) / 1000.0);
+    state.lastUpdateTs = now;
+    state.confidence = Math.max(0, state.confidence - (EMCON_CONFIDENCE_DECAY_PER_SEC * deltaSec));
+}
+
+function appendRenderRow(rows, id, entityType, x, y, z, yaw, speed, radius, count, confidence) {
+    rows.push(id, entityType, x, y, z, yaw, speed, radius, count, confidence);
+}
+
+function updateGhostTracks(decoyActive, decoyBurstCount, now) {
+    if (decoyActive && decoyBurstCount > lastDecoyBurstCount) {
+        const spawnCount = clamp(decoyBurstCount - lastDecoyBurstCount, 1, 3);
+        for (let i = 0; i < spawnCount; i++) {
+            const ghostId = nextGhostId--;
+            ghostTracks.set(ghostId, {
+                id: ghostId,
+                x: (Math.random() - 0.5) * 60.0,
+                y: (Math.random() - 0.5) * 60.0,
+                yaw: Math.random() * Math.PI * 2.0,
+                confidence: 0.2 + (Math.random() * 0.29), // always < 0.5
+                expiresAt: now + 6000 + (Math.random() * 6000)
+            });
+        }
+    }
+
+    lastDecoyBurstCount = decoyBurstCount;
+
+    for (let ghost of ghostTracks.values()) {
+        if (!decoyActive || now >= ghost.expiresAt) {
+            ghostTracks.delete(ghost.id);
+            continue;
+        }
+
+        // Deliberately non-kinematic "jump" motion to simulate spoofed emissions.
+        ghost.x = clamp(ghost.x + ((Math.random() - 0.5) * 14.0), -39.0, 39.0);
+        ghost.y = clamp(ghost.y + ((Math.random() - 0.5) * 14.0), -39.0, 39.0);
+        ghost.yaw = Math.random() * Math.PI * 2.0;
+    }
+}
 
 // Listen for the Float32Array from the main thread
 self.onmessage = function(e) {
-    const rawData = new Float32Array(e.data);
+    const payload = e.data || {};
+    const dataBuffer = payload instanceof ArrayBuffer ? payload : payload.buffer;
+    if (!dataBuffer) return;
+    const rawData = new Float32Array(dataBuffer);
+    const decoyActive = Boolean(payload.decoyActive);
+    const decoyBurstCount = Number(payload.decoyBurstCount) || 0;
     
     tacticalState.hostiles.length = 0;
     tacticalState.friendlies.length = 0;
@@ -256,13 +332,12 @@ self.onmessage = function(e) {
 
     // 3. Output Render Buffer Schema (Stride = 10)
     const STRIDE = 10;
-    const discreteCount = tacticalState.hostiles.length - clusteredHostiles.size;
-    const totalRenderCount = discreteCount + centroids.length;
-    
-    const renderingBuffer = new Float32Array(totalRenderCount * STRIDE);
-    let ptr = 0;
+    const renderRows = [];
     const now = performance.now();
     const emconAlerts = [];
+    const ghostUiTracks = [];
+
+    updateGhostTracks(decoyActive, decoyBurstCount, now);
     
     for (let c of centroids) {
         let isEmcon = false;
@@ -274,37 +349,58 @@ self.onmessage = function(e) {
         const idStr = 'C' + c.id;
         
         if (isEmcon) {
-            if (!emconState.has(idStr)) emconState.set(idStr, { lastX: c.x, lastY: c.y, entryTime: now });
-            const state = emconState.get(idStr);
+            const state = getOrCreateEmconState(idStr, c.x, c.y, now, c.threat);
+            decayEmconConfidence(state, now);
             const timeLossSec = (now - state.entryTime) / 1000.0;
             const ghostRadius = c.radius + (MAX_VELOCITY * timeLossSec);
+            const radiusFade = clamp(1.0 - ((ghostRadius - 15.0) / 5.0), 0.0, 1.0);
+            const renderConfidence = state.confidence * radiusFade;
+
+            if (state.confidence <= EMCON_LOST_CONFIDENCE_THRESHOLD || ghostRadius > EMCON_MAX_RADIUS_KM) {
+                emconState.delete(idStr);
+                maybeEmitTrackLost(`CENTROID-${c.id}`);
+                continue;
+            }
+
+            appendRenderRow(
+                renderRows,
+                c.id,
+                2.0,
+                state.lastX,
+                state.lastY,
+                0.0,
+                Math.atan2(c.vy, c.vx) + Math.PI / 2,
+                Math.sqrt(c.vx * c.vx + c.vy * c.vy),
+                ghostRadius,
+                c.count,
+                renderConfidence
+            );
             
-            renderingBuffer[ptr] = c.id;
-            renderingBuffer[ptr+1] = 2.0; // EMCON Ghost
-            renderingBuffer[ptr+2] = state.lastX;
-            renderingBuffer[ptr+3] = state.lastY;
-            renderingBuffer[ptr+4] = 0.0;
-            renderingBuffer[ptr+5] = Math.atan2(c.vy, c.vx) + Math.PI / 2;
-            renderingBuffer[ptr+6] = Math.sqrt(c.vx*c.vx + c.vy*c.vy);
-            renderingBuffer[ptr+7] = ghostRadius;
-            renderingBuffer[ptr+8] = c.count;
-            renderingBuffer[ptr+9] = Math.max(0, c.threat * (1.0 - timeLossSec/10.0));
-            
-            emconAlerts.push({ id: `CENTROID-${c.id}`, radius: ghostRadius });
+            emconAlerts.push({
+                id: `CENTROID-${c.id}`,
+                numericId: c.id,
+                radius: ghostRadius,
+                confidence: renderConfidence,
+                x: state.lastX,
+                y: state.lastY
+            });
         } else {
             emconState.delete(idStr);
-            renderingBuffer[ptr] = c.id;
-            renderingBuffer[ptr+1] = 1.0; // Swarm Centroid
-            renderingBuffer[ptr+2] = c.x;
-            renderingBuffer[ptr+3] = c.y;
-            renderingBuffer[ptr+4] = 0.0;
-            renderingBuffer[ptr+5] = Math.atan2(c.vy, c.vx) + Math.PI / 2;
-            renderingBuffer[ptr+6] = Math.sqrt(c.vx*c.vx + c.vy*c.vy);
-            renderingBuffer[ptr+7] = c.radius;
-            renderingBuffer[ptr+8] = c.count;
-            renderingBuffer[ptr+9] = c.threat;
+            lostTrackNotified.delete(`CENTROID-${c.id}`);
+            appendRenderRow(
+                renderRows,
+                c.id,
+                1.0,
+                c.x,
+                c.y,
+                0.0,
+                Math.atan2(c.vy, c.vx) + Math.PI / 2,
+                Math.sqrt(c.vx * c.vx + c.vy * c.vy),
+                c.radius,
+                c.count,
+                c.threat
+            );
         }
-        ptr += STRIDE;
     }
     
     for (let h of tacticalState.hostiles) {
@@ -318,39 +414,86 @@ self.onmessage = function(e) {
             const idStr = 'T' + h.id;
             
             if (isEmcon) {
-                if (!emconState.has(idStr)) emconState.set(idStr, { lastX: h.x, lastY: h.y, entryTime: now });
-                const state = emconState.get(idStr);
+                const state = getOrCreateEmconState(idStr, h.x, h.y, now, h.threat);
+                decayEmconConfidence(state, now);
                 const timeLossSec = (now - state.entryTime) / 1000.0;
                 const ghostRadius = 0.5 + (MAX_VELOCITY * timeLossSec); // Base radius 0.5 for discrete
+                const radiusFade = clamp(1.0 - ((ghostRadius - 15.0) / 5.0), 0.0, 1.0);
+                const renderConfidence = state.confidence * radiusFade;
+
+                if (state.confidence <= EMCON_LOST_CONFIDENCE_THRESHOLD || ghostRadius > EMCON_MAX_RADIUS_KM) {
+                    emconState.delete(idStr);
+                    maybeEmitTrackLost(`SW-${h.id}`);
+                    continue;
+                }
+
+                appendRenderRow(
+                    renderRows,
+                    h.id,
+                    2.0,
+                    state.lastX,
+                    state.lastY,
+                    0.0,
+                    Math.atan2(h.vy, h.vx) + Math.PI / 2,
+                    Math.sqrt(h.vx * h.vx + h.vy * h.vy),
+                    ghostRadius,
+                    1,
+                    renderConfidence
+                );
                 
-                renderingBuffer[ptr] = h.id;
-                renderingBuffer[ptr+1] = 2.0; // EMCON Ghost
-                renderingBuffer[ptr+2] = state.lastX;
-                renderingBuffer[ptr+3] = state.lastY;
-                renderingBuffer[ptr+4] = 0.0;
-                renderingBuffer[ptr+5] = Math.atan2(h.vy, h.vx) + Math.PI / 2;
-                renderingBuffer[ptr+6] = Math.sqrt(h.vx*h.vx + h.vy*h.vy);
-                renderingBuffer[ptr+7] = ghostRadius;
-                renderingBuffer[ptr+8] = 1;
-                renderingBuffer[ptr+9] = Math.max(0, h.threat * (1.0 - timeLossSec/10.0));
-                
-                emconAlerts.push({ id: `SW-${h.id}`, radius: ghostRadius });
+                emconAlerts.push({
+                    id: `SW-${h.id}`,
+                    numericId: h.id,
+                    radius: ghostRadius,
+                    confidence: renderConfidence,
+                    x: state.lastX,
+                    y: state.lastY
+                });
             } else {
                 emconState.delete(idStr);
-                renderingBuffer[ptr] = h.id;
-                renderingBuffer[ptr+1] = 0.0; // Discrete Track
-                renderingBuffer[ptr+2] = h.x;
-                renderingBuffer[ptr+3] = h.y;
-                renderingBuffer[ptr+4] = 0.0;
-                renderingBuffer[ptr+5] = Math.atan2(h.vy, h.vx) + Math.PI / 2;
-                renderingBuffer[ptr+6] = Math.sqrt(h.vx*h.vx + h.vy*h.vy);
-                renderingBuffer[ptr+7] = 0.0;
-                renderingBuffer[ptr+8] = 1;
-                renderingBuffer[ptr+9] = h.threat;
+                lostTrackNotified.delete(`SW-${h.id}`);
+                appendRenderRow(
+                    renderRows,
+                    h.id,
+                    0.0,
+                    h.x,
+                    h.y,
+                    0.0,
+                    Math.atan2(h.vy, h.vx) + Math.PI / 2,
+                    Math.sqrt(h.vx * h.vx + h.vy * h.vy),
+                    0.0,
+                    1,
+                    h.threat
+                );
             }
-            ptr += STRIDE;
         }
     }
+
+    for (let ghost of ghostTracks.values()) {
+        appendRenderRow(
+            renderRows,
+            ghost.id,
+            0.0,
+            ghost.x,
+            ghost.y,
+            0.0,
+            ghost.yaw,
+            0.0,
+            0.0,
+            1.0,
+            ghost.confidence
+        );
+        ghostUiTracks.push({
+            id: `GHOST-${Math.abs(ghost.id)}`,
+            numericId: ghost.id,
+            x: ghost.x,
+            y: ghost.y,
+            confidence: ghost.confidence
+        });
+    }
+
+    const renderingBuffer = new Float32Array(renderRows.length);
+    for (let i = 0; i < renderRows.length; i++) renderingBuffer[i] = renderRows[i];
 
     const uiMetadata = {
         centroids: centroids.map(c => ({
@@ -359,7 +502,8 @@ self.onmessage = function(e) {
             radius: c.radius,
             childIds: c.childIds
         })),
-        emcon: emconAlerts
+        emcon: emconAlerts,
+        ghosts: ghostUiTracks
     };
 
     self.postMessage({

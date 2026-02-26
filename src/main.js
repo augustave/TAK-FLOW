@@ -91,6 +91,10 @@ window.addEventListener('mousedown', e => {
         const mgrsE = Math.floor(48250 + mx * 50);
         const mgrsN = Math.floor(17530 + (-p.z) * 50);
         const mgrsString = `38TLN ${String(mgrsE).padStart(5,'0')} ${String(mgrsN).padStart(5,'0')}`;
+
+        if (!domController.canInitiateStrike(selectedTrackId)) {
+            return;
+        }
         
         store.set('pendingDesignation', { x: p.x, z: p.z, mgrs: mgrsString, trackId: selectedTrackId });
         domController.confirmStrip.style.display = 'flex';
@@ -135,11 +139,12 @@ window.addEventListener('mousemove', e => {
 const originalCommit = domController.commitDesignation.bind(domController);
 domController.commitDesignation = function() {
     const pending = store.get('pendingDesignation');
-    if(pending) {
+    const committed = originalCommit();
+    if(committed && pending) {
         mapEngine.explosions[window.expIdx || 0].set(pending.x, pending.z, 0.01);
         window.expIdx = ((window.expIdx || 0) + 1) % 8;
     }
-    originalCommit();
+    return committed;
 }
 
 // Logic: Keyboard

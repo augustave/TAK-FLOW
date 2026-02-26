@@ -1,4 +1,5 @@
 import { trackData, sources, confidences, loadScenario } from '../data/mockData.js';
+import { store } from './Store.js';
 
 export class TrackManager {
     constructor(overlayGroup) {
@@ -41,9 +42,17 @@ export class TrackManager {
         this.workerPending = false;
         this.latestRenderingBuffer = null;
         this.latestUiMetadata = null;
+        this.latestEmconMetadata = [];
+        this.latestGhostMetadata = [];
         this.hiddenTrackIds = new Set();
         this.centroidIdMap = {};
         this.hostileIdMap = {};
+        this.emconIdMap = {};
+        this.numericTrackIdMap = new Map();
+        this.emconMetaByNumericId = new Map();
+        this.ghostMetaByNumericId = new Map();
+        this.liveTrackStateById = new Map();
+        this.trackLossLogs = new Set();
 
         // Phase 12 Dynamical System Validation Harness
         this.swarmTelemetry = {
@@ -65,34 +74,44 @@ export class TrackManager {
         this.workerPending = false;
         
         this.opforWorker.onmessage = (e) => {
+            const payload = e.data || {};
+            if (payload.type === 'TRACK_LOST') {
+                this.handleTrackLost(payload.id);
+                return;
+            }
+
             this.workerPending = false;
-            if (e.data.intents) {
-                this.applyOpforIntents(new Float32Array(e.data.intents));
+            if (payload.intents) {
+                this.applyOpforIntents(new Float32Array(payload.intents));
             }
-            if (e.data.render) {
-                this.latestRenderingBuffer = new Float32Array(e.data.render);
+            if (payload.render) {
+                this.latestRenderingBuffer = new Float32Array(payload.render);
             }
-            if (e.data.ui) {
-                this.updateUiSwarms(e.data.ui.centroids || []);
-                this.latestEmconMetadata = e.data.ui.emcon || [];
-                
+            if (payload.ui) {
+                this.latestUiMetadata = payload.ui;
+                this.updateUiSwarms(payload.ui.centroids || []);
+                this.latestEmconMetadata = (payload.ui.emcon || []).map(emconData => {
+                    const workerId = emconData.id;
+                    const realId = this.resolveWorkerTrackId(workerId);
+                    return { ...emconData, realId };
+                });
+                this.emconMetaByNumericId = new Map();
                 this.latestEmconMetadata.forEach(emconData => {
-                    if (emconData.id.startsWith('SW-')) {
-                        const rawId = parseInt(emconData.id.substring(3));
-                        const tr = this.instances['hostile']?.tracks[rawId];
-                        if (tr && tr.t && tr.t.id) emconData.realId = tr.t.id;
-                    } else if (emconData.id.startsWith('CENTROID-')) {
-                        const rawId = parseInt(emconData.id.substring(9));
-                        emconData.realId = 'C-' + rawId;
-                    }
+                    this.emconMetaByNumericId.set(emconData.numericId, emconData);
                 });
 
+                this.latestGhostMetadata = payload.ui.ghosts || [];
+                this.ghostMetaByNumericId = new Map();
+                this.latestGhostMetadata.forEach(ghostData => {
+                    this.ghostMetaByNumericId.set(ghostData.numericId, ghostData);
+                });
+                
                 if (this.latestEmconMetadata.length > 0 && window.opsLogInstance) {
                     if (!this.emconLogs) this.emconLogs = new Set();
                     this.latestEmconMetadata.forEach(emconData => {
                         if (!this.emconLogs.has(emconData.id)) {
                             this.emconLogs.add(emconData.id);
-                            const displayId = emconData.realId ? (typeof emconData.realId === 'number' ? 'TK-' + emconData.realId : emconData.realId) : emconData.id;
+                            const displayId = emconData.realId || emconData.id;
                             window.opsLogInstance.addEntry('WARNING', `[EW ALERT]`, `TRACK ${displayId} DATALINK SEVERED. INITIATING KINEMATIC EXTRAPOLATION.`, 2, 45);
                         }
                     });
@@ -121,6 +140,57 @@ export class TrackManager {
         });
     }
 
+    resolveWorkerTrackId(workerTrackId) {
+        if (typeof workerTrackId !== 'string') return workerTrackId;
+        if (workerTrackId.startsWith('SW-')) {
+            const numericId = parseInt(workerTrackId.substring(3), 10);
+            return this.numericTrackIdMap.get(numericId) || workerTrackId;
+        }
+        return workerTrackId;
+    }
+
+    removeTrackFromScope(trackId) {
+        if (!trackId || typeof trackId !== 'string') return false;
+        let removed = false;
+
+        const dataIdx = this.trackData.findIndex(t => t.id === trackId);
+        if (dataIdx !== -1) {
+            this.trackData.splice(dataIdx, 1);
+            removed = true;
+        }
+
+        Object.values(this.instances).forEach(inst => {
+            const before = inst.tracks.length;
+            inst.tracks = inst.tracks.filter(tr => tr.t.id !== trackId);
+            if (inst.tracks.length !== before) removed = true;
+        });
+
+        if (this.provenanceByTrackId[trackId]) delete this.provenanceByTrackId[trackId];
+        if (this.trackDestinations[trackId]) delete this.trackDestinations[trackId];
+        this.liveTrackStateById.delete(trackId);
+
+        if (store.get('selectedTrackId') === trackId) {
+            store.set('selectedTrackId', null);
+            store.set('reconMode', false);
+        }
+
+        return removed;
+    }
+
+    handleTrackLost(workerTrackId) {
+        const resolvedTrackId = this.resolveWorkerTrackId(workerTrackId);
+        const removedResolved = this.removeTrackFromScope(resolvedTrackId);
+        const removedWorker = !removedResolved && resolvedTrackId !== workerTrackId
+            ? this.removeTrackFromScope(workerTrackId)
+            : false;
+
+        const displayId = removedResolved || removedWorker ? (resolvedTrackId || workerTrackId) : (resolvedTrackId || workerTrackId);
+        if (window.opsLogInstance && displayId && !this.trackLossLogs.has(displayId)) {
+            this.trackLossLogs.add(displayId);
+            window.opsLogInstance.addEntry('INFO', displayId, `TRACK ${displayId} DROPPED FROM SCOPE - SIGNAL LOST`, 0, 999);
+        }
+    }
+
     sendStateToWorker() {
         if (this.workerPending) return;
         const swarms = [];
@@ -130,16 +200,16 @@ export class TrackManager {
             });
         });
 
-        if (swarms.length === 0) return;
-
         const buffer = new Float32Array(swarms.length * 7);
         let idx = 0;
+        this.numericTrackIdMap = new Map();
 
         for (let i = 0; i < swarms.length; i++) {
             const item = swarms[i];
             const tr = item.tr;
             
             const numId = parseInt(tr.t.id.replace(/\D/g, '')) || 0;
+            this.numericTrackIdMap.set(numId, tr.t.id);
             buffer[idx++] = numId;
             buffer[idx++] = item.type === 'hostile' ? 1.0 : (item.type === 'friendly' ? 0.0 : 2.0);
             buffer[idx++] = tr.pos.x;
@@ -149,8 +219,13 @@ export class TrackManager {
             buffer[idx++] = tr.t.threat_level === 'HIGH' ? 1.0 : (tr.t.threat_level === 'MEDIUM' ? 0.5 : 0.0);
         }
 
+        const decoyState = store.get('decoySim') || {};
         this.workerPending = true;
-        this.opforWorker.postMessage(buffer.buffer, [buffer.buffer]);
+        this.opforWorker.postMessage({
+            buffer: buffer.buffer,
+            decoyActive: Boolean(decoyState.running),
+            decoyBurstCount: Number(decoyState.burstCount) || 0
+        }, [buffer.buffer]);
     }
 
     applyOpforIntents(intentsBuffer) {
@@ -228,20 +303,25 @@ export class TrackManager {
 
         const emconFS = `
             varying vec2 vUv;
+            varying float vConfidence;
             uniform float uTime;
             void main() {
                 float d = distance(vUv, vec2(0.5));
                 if (d > 0.5) discard;
                 float pulse = (sin(uTime * 3.0 - d * 15.0) + 1.0) * 0.5;
                 float alpha = (1.0 - (d * 2.0)) * (0.3 + 0.4 * pulse);
+                alpha = min(alpha * clamp(vConfidence, 0.0, 1.0), 0.6);
                 vec3 color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.2, 0.2), 1.0 - (d * 2.0));
                 gl_FragColor = vec4(color, alpha);
             }
         `;
         const emconVS = `
             varying vec2 vUv;
+            varying float vConfidence;
+            attribute float aConfidence;
             void main() {
                 vUv = uv;
+                vConfidence = aConfidence;
                 vec4 mvPosition = viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
             }
@@ -256,6 +336,8 @@ export class TrackManager {
         });
         
         const emconGeo = new THREE.PlaneGeometry(2, 2);
+        this.emconConfidenceAttr = new THREE.InstancedBufferAttribute(new Float32Array(2000), 1);
+        emconGeo.setAttribute('aConfidence', this.emconConfidenceAttr);
         this.emconMesh = new THREE.InstancedMesh(emconGeo, this.emconMaterial, 2000);
         this.emconMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.emconMesh.count = 0;
@@ -335,6 +417,16 @@ export class TrackManager {
             window.store.set('selectedTrackId', null);
             window.store.set('reconMode', false);
         }
+
+        this.latestRenderingBuffer = null;
+        this.latestEmconMetadata = [];
+        this.latestGhostMetadata = [];
+        this.emconMetaByNumericId = new Map();
+        this.ghostMetaByNumericId = new Map();
+        this.liveTrackStateById = new Map();
+        this.numericTrackIdMap = new Map();
+        this.trackLossLogs = new Set();
+        this.emconLogs = new Set();
         
         this.initTracks();
 
@@ -345,6 +437,30 @@ export class TrackManager {
 
     getTrackData() {
         return this.trackData.filter(t => !t.isHiddenByCentroid);
+    }
+
+    getTrackById(id) {
+        const track = this.trackData.find(t => t.id === id);
+        if (track) return track;
+
+        const liveState = this.liveTrackStateById.get(id);
+        if (!liveState) return null;
+
+        const subtype = String(id).startsWith('GHOST-')
+            ? 'SIGINT GHOST'
+            : (String(id).startsWith('CENTROID-') ? 'SWARM CENTROID' : 'EMCON TRACK');
+
+        return {
+            id,
+            type: 'unknown',
+            subtype,
+            x: liveState.x,
+            y: liveState.y,
+            spd: Math.round((liveState.speed || 0) * 10) / 10,
+            threat_level: liveState.confidence >= 0.7 ? 'HIGH' : (liveState.confidence >= 0.4 ? 'MEDIUM' : 'LOW'),
+            time_to_event_seconds: 0,
+            isSynthetic: true
+        };
     }
 
     getSwarmTelemetry() {
@@ -374,7 +490,37 @@ export class TrackManager {
     }
 
     getProvenance(id) {
-        return this.provenanceByTrackId[id];
+        if (this.provenanceByTrackId[id]) return this.provenanceByTrackId[id];
+        const confidenceScore = this.getTrackConfidenceScore(id);
+        return {
+            source: String(id).startsWith('GHOST-') ? 'ELINT-ESM' : 'EXTRAPOLATED',
+            confidence: this.confidenceScoreToLabel(confidenceScore),
+            lastUpdate: Date.now()
+        };
+    }
+
+    confidenceLabelToScore(label) {
+        if (label === 'HIGH') return 0.9;
+        if (label === 'MEDIUM') return 0.7;
+        if (label === 'LOW') return 0.35;
+        return 0.0;
+    }
+
+    confidenceScoreToLabel(score) {
+        if (score >= 0.75) return 'HIGH';
+        if (score >= 0.6) return 'MEDIUM';
+        return 'LOW';
+    }
+
+    getTrackConfidenceScore(id) {
+        if (!id) return 0.0;
+        const liveState = this.liveTrackStateById.get(id);
+        if (liveState && Number.isFinite(liveState.confidence)) {
+            return THREE.MathUtils.clamp(liveState.confidence, 0, 1);
+        }
+        const prov = this.provenanceByTrackId[id];
+        if (prov) return this.confidenceLabelToScore(prov.confidence);
+        return 0.0;
     }
 
     setDestination(id, destObj) {
@@ -726,15 +872,17 @@ export class TrackManager {
             this.hostileIdMap = {};
             this.centroidIdMap = {};
             this.emconIdMap = {};
+            const liveTrackState = new Map();
 
             for (let i = 0; i < buffer.length; i += STRIDE) {
-                const id = buffer[i];
+                const numericId = Math.trunc(buffer[i]);
                 const entityType = buffer[i+1];
                 const x = buffer[i+2];
                 const y = buffer[i+3];
                 const yaw = buffer[i+5];
+                const speed = buffer[i+6];
                 const radius = buffer[i+7];
-                const threat = buffer[i+9];
+                const threat = THREE.MathUtils.clamp(buffer[i+9], 0, 1);
 
                 dummy.position.set(x, y, 0.2);
                 dummy.rotation.set(0, 0, yaw);
@@ -742,12 +890,19 @@ export class TrackManager {
                 const isCentroid = entityType === 1.0;
                 const isEmcon = entityType === 2.0;
                 
-                let strId = `SW-${id}`;
-                if (isCentroid) strId = `CENTROID-${id}`;
-                else if (isEmcon && this.latestEmconMetadata) {
-                    const emconData = this.latestEmconMetadata.find(e => parseInt(e.id.replace(/\D/g, '')) === id);
-                    if (emconData) strId = emconData.id;
+                let strId = `SW-${numericId}`;
+                if (isCentroid) {
+                    strId = `CENTROID-${numericId}`;
+                } else if (isEmcon) {
+                    const emconData = this.emconMetaByNumericId.get(numericId);
+                    if (emconData) strId = emconData.realId || emconData.id || strId;
+                } else if (numericId < 0 && this.ghostMetaByNumericId.has(numericId)) {
+                    strId = this.ghostMetaByNumericId.get(numericId).id;
+                } else if (this.numericTrackIdMap.has(numericId)) {
+                    strId = this.numericTrackIdMap.get(numericId);
                 }
+
+                liveTrackState.set(strId, { x, y, speed, radius, confidence: threat, entityType });
                 
                 const isSelected = strId === selectedId;
 
@@ -755,6 +910,7 @@ export class TrackManager {
                 
                 if (isEmcon) {
                     this.emconIdMap[emconCount] = strId;
+                    if (this.emconConfidenceAttr) this.emconConfidenceAttr.setX(emconCount, threat);
                     dummy.scale.setScalar(radius);
                     dummy.updateMatrix();
                     this.emconMesh.setMatrixAt(emconCount, dummy.matrix);
@@ -815,6 +971,8 @@ export class TrackManager {
                 }
             }
 
+            this.liveTrackStateById = liveTrackState;
+
             this.instances.hostile.mesh.count = discreteCount;
             this.instances.hostile.mesh.instanceMatrix.needsUpdate = true;
             if (this.instances.hostile.mesh.instanceColor) this.instances.hostile.mesh.instanceColor.needsUpdate = true;
@@ -826,6 +984,7 @@ export class TrackManager {
             
             this.emconMesh.count = emconCount;
             this.emconMesh.instanceMatrix.needsUpdate = true;
+            if (this.emconConfidenceAttr) this.emconConfidenceAttr.needsUpdate = true;
             if (this.emconMesh.geometry.boundingSphere === null) this.emconMesh.geometry.computeBoundingSphere();
         }
 

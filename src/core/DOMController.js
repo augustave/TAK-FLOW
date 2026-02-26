@@ -44,9 +44,13 @@ export class DOMController {
 
         this.cursorCoords = document.getElementById('cursor-coords');
         this.cursorMgrs = document.getElementById('cursor-mgrs');
+        this.alertDotEl = document.getElementById('alert-dot');
+        this.alertTextEl = document.getElementById('alert-text');
 
         this.undoTimeoutId = null;
         this.destinationMode = false;
+        this.provenanceFlashIntervalId = null;
+        this.provenanceFlashTimeoutId = null;
 
         // Make clearUndoWindow globally available for OpsLog clear
         window.clearUndoWindow = () => this.clearUndoWindow();
@@ -57,7 +61,7 @@ export class DOMController {
         setInterval(() => {
             const selectedId = store.get('selectedTrackId');
             if(selectedId && !document.hidden) {
-                const track = this.trackManager.getTrackData().find(t => t.id === selectedId);
+                const track = this.trackManager.getTrackById(selectedId);
                 if(track) this.updateActiveTrackPanel(track);
             }
         }, 1000);
@@ -217,8 +221,15 @@ export class DOMController {
     selectTrack(id) {
         if(store.get('selectedTrackId') === id) return;
         store.set('selectedTrackId', id);
+        store.set('reconMode', false);
+        const btnRecon = document.getElementById('btn-recon');
+        if (btnRecon) {
+            btnRecon.textContent = 'RECON [3DGS]';
+            btnRecon.style.background = 'var(--amber-alert)';
+            btnRecon.style.color = '#000';
+        }
         
-        const track = this.trackManager.getTrackData().find(t => t.id === id);
+        const track = this.trackManager.getTrackById(id);
         if(track) {
             const prov = this.trackManager.getProvenance(id);
             this.opsLog.addEntry('SELECT', id, `TYPE:${track.subtype} SRC:${prov.source}`);
@@ -260,31 +271,51 @@ export class DOMController {
         this.clearDestinationButtonEl.disabled = false;
         
         const prov = this.trackManager.getProvenance(track.id);
+        const confidenceScore = this.trackManager.getTrackConfidenceScore(track.id);
         document.getElementById('at-id').textContent = track.id + ' / ' + track.subtype;
         
         let isEmcon = false;
         let emconRadius = 0;
+        let emconConfidence = confidenceScore;
         
         if (this.trackManager.latestEmconMetadata) {
             const emconData = this.trackManager.latestEmconMetadata.find(e => 
-                e.id === track.id || 
-                e.id === `SW-${track.id}` || 
-                e.id === `CENTROID-${track.id}` ||
+                e.id === track.id ||
                 e.realId === track.id
             );
             if (emconData) {
                 isEmcon = true;
                 emconRadius = emconData.radius;
+                emconConfidence = emconData.confidence;
             }
         }
+        const isGhost = track.id.startsWith('GHOST-');
         
-        if (isEmcon) {
+        if (isGhost) {
+            document.getElementById('at-kinematics').textContent = `[ SIGINT GHOST ] ERRATIC / UNVERIFIED`;
+            document.getElementById('at-source').textContent = 'ELINT-ESM';
+            
+            const confEl = document.getElementById('at-confidence');
+            confEl.textContent = `${Math.round(confidenceScore * 100)}% / UNVERIFIED`;
+            confEl.className = 'data-value red';
+            
+            const ageEl = document.getElementById('at-age');
+            ageEl.textContent = '--';
+            ageEl.className = 'data-value red';
+            
+            const badgeEl = document.getElementById('at-provenance-badge');
+            badgeEl.textContent = 'ZERO-TRUST';
+            badgeEl.className = 'panel-badge badge-alert';
+            
+            this.atLockStatusEl.textContent = 'RECON REQUIRED';
+            this.atLockStatusEl.className = 'data-value amber';
+        } else if (isEmcon) {
             document.getElementById('at-kinematics').textContent = `[ PROBABILISTIC / EMCON ] R: ${emconRadius.toFixed(2)}km`;
             document.getElementById('at-source').textContent = 'EXTRAPOLATED';
             
             const confEl = document.getElementById('at-confidence');
-            confEl.textContent = 'LOW / DEGRADED';
-            confEl.className = 'data-value amber';
+            confEl.textContent = `${Math.round(emconConfidence * 100)}% / DEGRADED`;
+            confEl.className = `data-value ${emconConfidence < 0.2 ? 'red' : 'amber'}`;
             
             const ageEl = document.getElementById('at-age');
             ageEl.textContent = '--';
@@ -479,9 +510,59 @@ export class DOMController {
         if(this.undoStrip) this.undoStrip.style.display = 'none';
     }
 
+    flashStrikeAbortWarning(message) {
+        if (!this.alertTextEl || !this.alertDotEl) return;
+        const prevText = this.alertTextEl.textContent;
+        const prevTextColor = this.alertTextEl.style.color;
+        const prevTextOpacity = this.alertTextEl.style.opacity;
+        const prevDotColor = this.alertDotEl.style.background;
+        const prevDotOpacity = this.alertDotEl.style.opacity;
+
+        if (this.provenanceFlashIntervalId) clearInterval(this.provenanceFlashIntervalId);
+        if (this.provenanceFlashTimeoutId) clearTimeout(this.provenanceFlashTimeoutId);
+
+        this.alertTextEl.textContent = message;
+        this.alertTextEl.style.color = 'var(--amber-alert)';
+        this.alertDotEl.style.background = 'var(--amber-alert)';
+
+        let flashTick = 0;
+        this.provenanceFlashIntervalId = setInterval(() => {
+            const isBright = flashTick % 2 === 0;
+            this.alertTextEl.style.opacity = isBright ? '1' : '0.35';
+            this.alertDotEl.style.opacity = isBright ? '1' : '0.35';
+            flashTick++;
+        }, 120);
+
+        this.provenanceFlashTimeoutId = setTimeout(() => {
+            if (this.provenanceFlashIntervalId) {
+                clearInterval(this.provenanceFlashIntervalId);
+                this.provenanceFlashIntervalId = null;
+            }
+            this.alertTextEl.textContent = prevText;
+            this.alertTextEl.style.color = prevTextColor;
+            this.alertTextEl.style.opacity = prevTextOpacity;
+            this.alertDotEl.style.background = prevDotColor;
+            this.alertDotEl.style.opacity = prevDotOpacity;
+        }, 1800);
+    }
+
+    canInitiateStrike(trackId) {
+        const confidence = this.trackManager.getTrackConfidenceScore(trackId);
+        const reconOverride = Boolean(store.get('reconMode'));
+        if (confidence >= 0.6 || reconOverride) return true;
+
+        const warningMsg = '[ STRIKE ABORTED: INSUFFICIENT TRACK PROVENANCE. 3DGS RECON REQUIRED ]';
+        this.flashStrikeAbortWarning(warningMsg);
+        this.opsLog.addEntry('WARNING', trackId || 'SYSTEM', warningMsg, 1, 999);
+        store.set('pendingDesignation', null);
+        this.hideConfirmStrip();
+        return false;
+    }
+
     commitDesignation() {
         const pending = store.get('pendingDesignation');
-        if(!pending) return;
+        if(!pending) return false;
+        if (!this.canInitiateStrike(pending.trackId)) return false;
         
         const reason = this.reasonSelect.style.display !== 'none' ? this.reasonSelect.value : 'N/A';
         const details = `AT ${pending.mgrs} ${reason !== 'N/A' ? 'R:'+reason : ''}`.trim();
@@ -496,6 +577,7 @@ export class DOMController {
 
         store.set('pendingDesignation', null);
         this.hideConfirmStrip();
+        return true;
     }
 
     undoLastDesignation() {
