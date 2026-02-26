@@ -149,14 +149,13 @@ function maybeEmitTrackLost(trackId) {
     self.postMessage({ type: 'TRACK_LOST', id: trackId });
 }
 
-function getOrCreateEmconState(idStr, x, y, now, initialConfidence) {
+function getOrCreateEmconState(idStr, x, y, vx, vy, now, initialConfidence) {
     if (!emconState.has(idStr)) {
         emconState.set(idStr, {
-            lastX: x,
-            lastY: y,
-            entryTime: now,
-            lastUpdateTs: now,
-            confidence: clamp(initialConfidence, 0, 1)
+            lastX: x, lastY: y, lastVx: vx, lastVy: vy,
+            entryTime: now, lastUpdateTs: now, lastYawTs: now,
+            confidence: clamp(initialConfidence, 0, 1),
+            bankAngle: 0
         });
     }
     return emconState.get(idStr);
@@ -196,10 +195,29 @@ function updateGhostTracks(decoyActive, decoyBurstCount, now) {
             continue;
         }
 
-        // Deliberately non-kinematic "jump" motion to simulate spoofed emissions.
-        ghost.x = clamp(ghost.x + ((Math.random() - 0.5) * 14.0), -39.0, 39.0);
-        ghost.y = clamp(ghost.y + ((Math.random() - 0.5) * 14.0), -39.0, 39.0);
-        ghost.yaw = Math.random() * Math.PI * 2.0;
+        if (!ghost.vx) {
+            ghost.vx = Math.cos(ghost.yaw) * 12.0;
+            ghost.vy = Math.sin(ghost.yaw) * 12.0;
+        }
+        if (Math.random() < 0.05 || !ghost.targetYaw) ghost.targetYaw = Math.random() * Math.PI * 2.0;
+        
+        let yawDiff = ghost.targetYaw - ghost.yaw;
+        while(yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+        while(yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+        
+        const speed = Math.sqrt(ghost.vx*ghost.vx + ghost.vy*ghost.vy) || 1.0;
+        const latAccelLimit = Math.tan(1.047) * 9.81; // 60 degrees max bank
+        const maxTurnRate = latAccelLimit / speed;
+        const dt = 0.1; // simulated worker dt
+        
+        const turnStep = clamp(yawDiff, -maxTurnRate * dt, maxTurnRate * dt);
+        ghost.yaw += turnStep;
+        
+        ghost.vx = Math.cos(ghost.yaw) * speed;
+        ghost.vy = Math.sin(ghost.yaw) * speed;
+
+        ghost.x = clamp(ghost.x + ghost.vx * dt, -39.0, 39.0);
+        ghost.y = clamp(ghost.y + ghost.vy * dt, -39.0, 39.0);
     }
 }
 
@@ -349,10 +367,21 @@ self.onmessage = function(e) {
         const idStr = 'C' + c.id;
         
         if (isEmcon) {
-            const state = getOrCreateEmconState(idStr, c.x, c.y, now, c.threat);
+            const state = getOrCreateEmconState(idStr, c.x, c.y, c.vx, c.vy, now, c.threat);
             decayEmconConfidence(state, now);
             const timeLossSec = (now - state.entryTime) / 1000.0;
-            const ghostRadius = c.radius + (MAX_VELOCITY * timeLossSec);
+            
+            const speed = Math.sqrt(c.vx*c.vx + c.vy*c.vy) || 1.0;
+            const dot = (state.lastVx*c.vx + state.lastVy*c.vy) / (speed*speed);
+            const cross = (state.lastVx*c.vy - state.lastVy*c.vx) / (speed*speed);
+            const dtYaw = Math.max(0.016, (now - state.lastYawTs) / 1000.0);
+            const latAccel = speed * Math.abs(Math.atan2(cross, dot)) / dtYaw;
+            const bankAngle = clamp(Math.atan(latAccel / 9.81), 0, 1.047);
+            state.lastYawTs = now; state.lastVx = c.vx; state.lastVy = c.vy;
+
+            const baseExpansionRate = MAX_VELOCITY * 0.5;
+            const shapeWarpFactor = 0.8;
+            const ghostRadius = c.radius + (baseExpansionRate * timeLossSec) + (Math.abs(bankAngle) * speed * shapeWarpFactor);
             const radiusFade = clamp(1.0 - ((ghostRadius - 15.0) / 5.0), 0.0, 1.0);
             const renderConfidence = state.confidence * radiusFade;
 
@@ -414,10 +443,21 @@ self.onmessage = function(e) {
             const idStr = 'T' + h.id;
             
             if (isEmcon) {
-                const state = getOrCreateEmconState(idStr, h.x, h.y, now, h.threat);
+                const state = getOrCreateEmconState(idStr, h.x, h.y, h.vx, h.vy, now, h.threat);
                 decayEmconConfidence(state, now);
                 const timeLossSec = (now - state.entryTime) / 1000.0;
-                const ghostRadius = 0.5 + (MAX_VELOCITY * timeLossSec); // Base radius 0.5 for discrete
+                
+                const speed = Math.sqrt(h.vx*h.vx + h.vy*h.vy) || 1.0;
+                const dot = (state.lastVx*h.vx + state.lastVy*h.vy) / (speed*speed);
+                const cross = (state.lastVx*h.vy - state.lastVy*h.vx) / (speed*speed);
+                const dtYaw = Math.max(0.016, (now - state.lastYawTs) / 1000.0);
+                const latAccel = speed * Math.abs(Math.atan2(cross, dot)) / dtYaw;
+                const bankAngle = clamp(Math.atan(latAccel / 9.81), 0, 1.047);
+                state.lastYawTs = now; state.lastVx = h.vx; state.lastVy = h.vy;
+
+                const baseExpansionRate = MAX_VELOCITY * 0.5;
+                const shapeWarpFactor = 0.8;
+                const ghostRadius = 0.5 + (baseExpansionRate * timeLossSec) + (Math.abs(bankAngle) * speed * shapeWarpFactor);
                 const radiusFade = clamp(1.0 - ((ghostRadius - 15.0) / 5.0), 0.0, 1.0);
                 const renderConfidence = state.confidence * radiusFade;
 

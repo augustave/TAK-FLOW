@@ -3,7 +3,7 @@
 ## Overview
 TAK-G is a high-fidelity, theater-level Command and Control (C2) visualization prototype. Designed with a brutalist, typography-driven aesthetic, the simulator explores "Decision Intelligence" workflows—focusing on how an operator manages high-density, multi-domain tracks (1,500+ entities) with varying levels of trust, provenance, and predictive threat analytics.
 
-The prototype simulates a degraded electronic warfare environment where tracks are probabilistic, and the system actively highlights critical, time-sensitive events while suppressing generic intelligence noise.
+The prototype simulates a degraded electronic warfare environment where tracks are probabilistic, and the system actively highlights critical, time-sensitive events while suppressing generic intelligence noise. The current build includes EMCON confidence-driven alpha decay, automatic lost-track culling, and zero-trust SIGINT ghost tracks.
 
 ## Tech Stack
 The project is built emphasizing maximum runtime execution speed and minimal dependencies, utilizing a vanilla web architecture:
@@ -42,12 +42,19 @@ The project is built emphasizing maximum runtime execution speed and minimal dep
 *   **Dynamical System Harness**: Built a real-time math engine into the `TrackManager` that calculates systemic **Order Parameters** (Polarization, Milling, Cohesion).
 *   **Telemetry HUD**: Wired the Order Parameters into a live `SWARM KINEMATICS` UI panel, confirming through hard math that the biological swarms are undergoing actual regime changes and phase transitions, not just moving organically. 
 
+### Phases 13-14.3: OPFOR Worker, EMCON Decay, & Zero-Trust Guardrails
+*   **OPFOR Worker Pipeline**: Introduced a dedicated `opforWorker.js` execution lane for hostile swarm behavior-tree intents, centroiding, and EW-state render metadata.
+*   **EMCON Alpha-Decay**: EMCON heatmaps now ingest per-instance confidence (`aConfidence`) in shader space and scale fragment alpha accordingly, with a hard cap of `0.6` to prevent full-screen visual occlusion.
+*   **Radius/Confidence Culling**: Lost tracks are automatically culled when confidence decays to `<= 0.05` or EW extrapolation radius exceeds `20km`; culled tracks are removed from active buffers and recorded in Ops Log.
+*   **Zero-Trust SIGINT Ghosts**: Decoy simulation bursts can now inject synthetic low-confidence (`<0.5`) ghost tracks with non-kinematic jumps to emulate spoofed emissions.
+*   **Designation Guardrails**: Strike designation is blocked for tracks under `0.6` confidence unless the operator explicitly overrides through `RECON [3DGS]`, with amber warning feedback and audit logging.
+
 ## Running Locally
 1. Clone the repository.
 2. Serve the root directory using any local web server (e.g., `python3 -m http.server 8080` or `npx serve`).
 3. Navigate to `http://localhost:8080` (or `http://localhost:5500` if using Live Server) in any modern WebGL-compatible browser.
 
 ## Next Steps
-- Exploring experimental AI/LLM integration to emulate automated opposing force (OPFOR) or blue-force autonomous agents.
-- Further expansion of the Decoy Simulation tools.
-- Enhancing Electronic Warfare (EW) UI elements for degraded sensor states.
+- Add deterministic replay capture for EMCON decay/cull events to support after-action review.
+- Expand ghost-track profiles (RF signature families, timed spoof windows, and operator training presets).
+- Add automated browser-level scenario tests to validate designation guardrails and EW fade behavior end-to-end.

@@ -309,8 +309,10 @@ export class TrackManager {
                 float d = distance(vUv, vec2(0.5));
                 if (d > 0.5) discard;
                 float pulse = (sin(uTime * 3.0 - d * 15.0) + 1.0) * 0.5;
-                float alpha = (1.0 - (d * 2.0)) * (0.3 + 0.4 * pulse);
-                alpha = min(alpha * clamp(vConfidence, 0.0, 1.0), 0.6);
+                // Threat Confidence dictates GLSL alpha decay rate 
+                float baseAlpha = (1.0 - (d * 2.0)) * (0.3 + 0.4 * pulse);
+                float decayRate = pow(clamp(vConfidence, 0.0, 1.0), 1.5);
+                float alpha = min(baseAlpha * decayRate, 0.6);
                 vec3 color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.2, 0.2), 1.0 - (d * 2.0));
                 gl_FragColor = vec4(color, alpha);
             }
@@ -555,7 +557,6 @@ export class TrackManager {
             });
         });
 
-        // Optimization: Spatial Hash Grid
         const grid = new Map();
         const CELL_SIZE = 2.0;
         
@@ -566,19 +567,28 @@ export class TrackManager {
             grid.get(key).push(swarms[i]);
         }
 
-        const ALIGN_WEIGHT = 0.8;
-        const COHESION_WEIGHT = 0.5;
         const SEPARATION_WEIGHT = 1.8;
         const HUNT_WEIGHT = 1.2;
-        const MAX_SPEED = 5.0; 
+        const MAX_SPEED = 12.0; 
         const MAX_FORCE = 3.0;
-        
-        // STARFLAG: Topological Fixed K Nearest Neighbors
         const TOPOLOGICAL_K = 7;
+        
+        // Aerodynamic constants
+        const MASS_KG = 0.08;
+        const RHO = 1.225; // Air density
+        const CD = 0.05; // Drag coeff
+        const CL = 0.15; // Lift coeff
+        const MAX_BANKING_RAD = 1.047; // 60 deg
 
         for (let i = 0; i < swarms.length; i++) {
             const item = swarms[i];
             const tr = item.tr;
+            const numId = parseInt(tr.t.id.replace(/\D/g, '')) || 0;
+            
+            // Phase Transition: TRANSIT vs EMCON_EVASION
+            const isEmconEvasion = this.emconMetaByNumericId.has(numId);
+            const ALIGN_WEIGHT = isEmconEvasion ? 0.2 : 2.0;
+            const COHESION_WEIGHT = isEmconEvasion ? 4.0 : 0.2;
             
             const cx = Math.floor(tr.pos.x / CELL_SIZE);
             const cy = Math.floor(tr.pos.y / CELL_SIZE);
@@ -601,19 +611,18 @@ export class TrackManager {
                             const otherItem = cell[j];
                             if (otherItem.tr !== tr) {
                                 const distSq = tr.pos.distanceToSquared(otherItem.tr.pos);
-                                if (distSq > 0.0001) { // not self
+                                if (distSq > 0.0001) {
                                     if (item.type === otherItem.type) {
-                                        // Collect all friendly neighbors for sorting
-                                        localNeighbors.push({ tr: otherItem.tr, distSq });
+                                        // Fuzzy logic noise in distance sorting
+                                        const fuzzyNoise = 0.9 + Math.random() * 0.2; 
+                                        localNeighbors.push({ tr: otherItem.tr, distSq: distSq * fuzzyNoise });
                                         
-                                        // Separation strictly requires metric bounding (collision avoidance)
                                         if (distSq < CELL_SIZE * 0.4 * CELL_SIZE * 0.4) {
                                             const dist = Math.sqrt(distSq);
                                             const diff = tr.pos.clone().sub(otherItem.tr.pos).normalize().divideScalar(dist);
                                             localSeparations.push(diff);
                                         }
-                                    } 
-                                    else if (distSq < CELL_SIZE * CELL_SIZE && 
+                                    } else if (distSq < CELL_SIZE * CELL_SIZE && 
                                             ((item.type === 'friendly' && otherItem.type === 'hostile') || 
                                              (item.type === 'hostile' && otherItem.type === 'friendly'))) {
                                         hunt.add(otherItem.tr.pos);
@@ -626,70 +635,95 @@ export class TrackManager {
                 }
             }
 
-            // STARFLAG: Sort found neighbors by distance and slice top K
             localNeighbors.sort((a, b) => a.distSq - b.distSq);
             const topK = localNeighbors.slice(0, TOPOLOGICAL_K);
             const neighborCount = topK.length;
 
-            let steer = new THREE.Vector2();
+            let targetForce = new THREE.Vector2();
 
             if (neighborCount > 0) {
                 for (let k = 0; k < neighborCount; k++) {
                     const n = topK[k].tr;
                     cohesion.add(n.pos);
-                    
-                    // Fuzzy Logic (Bajec): Add sensory noise to the velocity perception
-                    const fuzzyNoise = 0.8 + (Math.random() * 0.4); // 0.8x to 1.2x variance
-                    const fuzzyVel = n.vel.clone().multiplyScalar(fuzzyNoise);
-                    align.add(fuzzyVel);
+                    const fuzzyVelNoise = 0.8 + (Math.random() * 0.4); 
+                    align.add(n.vel.clone().multiplyScalar(fuzzyVelNoise));
                 }
-
                 align.divideScalar(neighborCount);
                 if (align.lengthSq() > 0) align.setLength(MAX_SPEED).sub(tr.vel);
                 
                 cohesion.divideScalar(neighborCount).sub(tr.pos);
                 if (cohesion.lengthSq() > 0) cohesion.setLength(MAX_SPEED).sub(tr.vel);
                 
-                steer.add(align.multiplyScalar(ALIGN_WEIGHT));
-                steer.add(cohesion.multiplyScalar(COHESION_WEIGHT));
+                targetForce.add(align.multiplyScalar(ALIGN_WEIGHT));
+                targetForce.add(cohesion.multiplyScalar(COHESION_WEIGHT));
             }
             
-            // Separation resolves over metric boundaries to prevent overlap
             if (localSeparations.length > 0) {
                 for (let s = 0; s < localSeparations.length; s++) {
                     separation.add(localSeparations[s]);
                 }
                 separation.divideScalar(localSeparations.length);
                 if(separation.lengthSq() > 0) separation.setLength(MAX_SPEED).sub(tr.vel);
-                steer.add(separation.multiplyScalar(SEPARATION_WEIGHT));
+                targetForce.add(separation.multiplyScalar(SEPARATION_WEIGHT));
             }
             
             if (huntCount > 0) {
                 hunt.divideScalar(huntCount).sub(tr.pos);
                 if(hunt.lengthSq() > 0) hunt.setLength(MAX_SPEED).sub(tr.vel);
-                steer.add(hunt.multiplyScalar(HUNT_WEIGHT));
+                targetForce.add(hunt.multiplyScalar(HUNT_WEIGHT));
             }
 
-            // Boundary avoidance
-            const mapLimit = 36.0;
-            if (tr.pos.x < -mapLimit) steer.x += MAX_FORCE;
-            if (tr.pos.x > mapLimit) steer.x -= MAX_FORCE;
-            if (tr.pos.y < -mapLimit) steer.y += MAX_FORCE;
-            if (tr.pos.y > mapLimit) steer.y -= MAX_FORCE;
+            // Evasion Jitters in EMCON
+            if (isEmconEvasion) {
+                const evadeForce = new THREE.Vector2((Math.random() - 0.5) * 40.0, (Math.random() - 0.5) * 40.0);
+                targetForce.add(evadeForce);
+            }
 
-            // Phase 13: OPFOR Web Worker Intelligence Override
-            // Blend the background BT intent into the physical steering
+            const mapLimit = 36.0;
+            if (tr.pos.x < -mapLimit) targetForce.x += MAX_FORCE * 5;
+            if (tr.pos.x > mapLimit) targetForce.x -= MAX_FORCE * 5;
+            if (tr.pos.y < -mapLimit) targetForce.y += MAX_FORCE * 5;
+            if (tr.pos.y > mapLimit) targetForce.y -= MAX_FORCE * 5;
+
             if (tr.desiredOpforVector && (tr.desiredOpforVector.x !== 0 || tr.desiredOpforVector.y !== 0)) {
                 const opforForce = tr.desiredOpforVector.clone().setLength(MAX_SPEED).sub(tr.vel);
-                // Give the OPFOR intelligence a high weight to override basic flocking when necessary
-                steer.add(opforForce.multiplyScalar(2.0)); 
+                targetForce.add(opforForce.multiplyScalar(2.0)); 
             }
 
-            if (steer.lengthSq() > MAX_FORCE * MAX_FORCE) steer.setLength(MAX_FORCE);
+            // --- Newtonian Aerodynamic Integrator ---
+            const speed = tr.vel.length() || 0.1;
+            const speedSq = speed * speed;
+            const heading = tr.vel.clone().normalize();
             
-            tr.vel.add(steer.multiplyScalar(dt));
+            const dragMag = 0.5 * RHO * speedSq * CD;
+            const dragForce = heading.clone().multiplyScalar(-dragMag);
+            
+            const liftMag = 0.5 * RHO * speedSq * CL; // Theoretical max lift if used
+            
+            const thrustMag = targetForce.dot(heading);
+            const thrustForce = heading.clone().multiplyScalar(Math.max(0.1, thrustMag)); // Prevent total stall
+            
+            const perpForce = targetForce.clone().sub(heading.clone().multiplyScalar(thrustMag));
+            let latAccel = perpForce.length() / MASS_KG;
+            let beta = Math.atan(latAccel / 9.81);
+            
+            // Clamp banking angle to 60 degrees max
+            if (beta > MAX_BANKING_RAD) {
+                beta = MAX_BANKING_RAD;
+                latAccel = Math.tan(beta) * 9.81;
+                perpForce.setLength(latAccel * MASS_KG);
+            }
+            
+            const totalForce = new THREE.Vector2()
+                .add(thrustForce)
+                .add(perpForce)
+                .add(dragForce);
+                
+            const accel = totalForce.divideScalar(MASS_KG);
+            tr.vel.add(accel.multiplyScalar(dt));
+            
+            // Speed caps corresponding to drag equilibrium
             if (tr.vel.lengthSq() > MAX_SPEED * MAX_SPEED) tr.vel.setLength(MAX_SPEED);
-            
             tr.pos.add(tr.vel.clone().multiplyScalar(dt));
         }
 
