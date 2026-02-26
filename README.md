@@ -12,6 +12,10 @@ The project is built emphasizing maximum runtime execution speed and minimal dep
 - **Styling**: Vanilla CSS, utilizing native CSS variables, flexbox layouts, and custom animations. No external UI frameworks (e.g., React, Tailwind) are used.
 - **Development Environment**: Standard local HTTP server; no complex build steps or transpilation pipelines required.
 
+  
+<img width="1724" height="958" alt="Screenshot 2026-02-25 at 9 25 35 PM" src="https://github.com/user-attachments/assets/00f86624-a3b9-40ec-b9f3-766baabfaad0" />
+
+  
 ## Core Intentions
 1. **Decision Intelligence**: Move beyond passive maps. The UI acts as a filter, shifting operator focus to high-threat assets with a low time-to-event horizon (TTE < 60s) via visual pulsing and priority alert sorting.
 2. **Dynamical Regimes over Scripting**: Swarms and hostiles aren't run on rails. The simulation uses organic, mathematical kinematic engines (Boids, Topological Interactions) to create unpredictable, lifelike emergent behaviors.
