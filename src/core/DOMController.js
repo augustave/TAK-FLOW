@@ -23,6 +23,8 @@ export class DOMController {
         this.atDestinationEl = document.getElementById('at-destination');
         this.setDestinationButtonEl = document.getElementById('btn-set-destination');
         this.clearDestinationButtonEl = document.getElementById('btn-clear-destination');
+        this.reconConfirmBtn = document.getElementById('btn-recon-confirm');
+        this.reconAbortBtn = document.getElementById('btn-recon-abort');
         
         // PRD: Track Log Filtering & Sorting State
         this.filterSearch = '';
@@ -31,7 +33,6 @@ export class DOMController {
         this.sortDir = 1; // 1 = asc, -1 = desc
         
         this.tbody = document.getElementById('track-tbody');
-        this.trackLogCountEl = document.querySelector('.panel-badge.badge-warning');
 
         // Phase 12 Telemetry DOM
         this.domPol = document.getElementById('kinematics-polarization');
@@ -143,7 +144,7 @@ export class DOMController {
         }
 
         const btnRecon = document.getElementById('btn-recon');
-        btnRecon?.addEventListener('click', () => {
+        btnRecon.addEventListener('click', () => {
             const selectedId = store.get('selectedTrackId');
             if(!selectedId) {
                 this.opsLog.addEntry('MODE', 'SYSTEM', 'RECON MODE REQUIRES TRACK SELECT');
@@ -153,17 +154,60 @@ export class DOMController {
             store.set('reconMode', isRecon);
             
             if (isRecon) {
-                this.opsLog.addEntry('MODE', '3DGS', `INITIATING SPLAT RECON ON [${selectedId}]`);
-                btnRecon.textContent = 'EXIT RECON';
-                btnRecon.style.background = 'var(--red-force)';
-                btnRecon.style.color = '#fff';
+                // 1.5s Tasking Delay
+                this.opsLog.addEntry('MODE', '3DGS', `[ISR] TASKING OVERHEAD ASSET TO GRID...`);
+                btnRecon.textContent = 'TASKING...';
+                btnRecon.disabled = true;
+                btnRecon.style.background = 'var(--panel-bg)';
+                btnRecon.style.color = 'var(--text-dim)';
+                
+                setTimeout(() => {
+                    const track = this.trackManager.getTrackById(selectedId);
+                    // Crucial: Only reveal the splat and buttons if the user hasn't selected another track mid-delay
+                    if (track && store.get('selectedTrackId') === selectedId) {
+                        const radius = track.subtype === 'SWARM CENTROID' ? 10.0 : 4.0;
+                        this.trackManager.generateReconSplat(track.x, track.y, radius);
+                        
+                        // Mutate Panel Buttons
+                        btnRecon.style.display = 'none';
+                        if(this.setDestinationButtonEl) this.setDestinationButtonEl.style.display = 'none';
+                        if(this.clearDestinationButtonEl) this.clearDestinationButtonEl.style.display = 'none';
+                        if(this.reconConfirmBtn) this.reconConfirmBtn.style.display = 'block';
+                        if(this.reconAbortBtn) this.reconAbortBtn.style.display = 'block';
+                    }
+                }, 1500);
+
             } else {
-                this.opsLog.addEntry('MODE', 'SYSTEM', `TERMINATING SPLAT RECON ON [${selectedId}]`);
-                btnRecon.textContent = 'RECON [3DGS]';
-                btnRecon.style.background = 'var(--amber-alert)';
-                btnRecon.style.color = '#000';
+                this.deactivateRecon(selectedId);
             }
         });
+        
+        if (this.reconConfirmBtn) {
+            this.reconConfirmBtn.addEventListener('click', () => {
+                const selectedId = store.get('selectedTrackId');
+                if(!selectedId) return;
+                
+                this.opsLog.addEntry('INTEL', selectedId, `VISUAL PROVENANCE CONFIRMED. WEAPONS RELEASE AUTHORIZED.`);
+                store.set('reconMode', false);
+                this.trackManager.opforWorker.postMessage({ type: 'FORCE_CONFIDENCE', id: selectedId, value: 1.0 });
+                this.deactivateRecon(selectedId);
+                
+                // Re-eval lock status now that confidence is forced to 1.0
+                const track = this.trackManager.getTrackById(selectedId);
+                if(track) this.updateActiveTrackPanel(track);
+            });
+        }
+
+        if (this.reconAbortBtn) {
+            this.reconAbortBtn.addEventListener('click', () => {
+                const selectedId = store.get('selectedTrackId');
+                if(!selectedId) return;
+                
+                this.opsLog.addEntry('INTEL', selectedId, `TARGET UNVERIFIED. STRIKE ABORTED.`);
+                store.set('reconMode', false);
+                this.deactivateRecon(selectedId);
+            });
+        }
 
         this.clearDestinationButtonEl?.addEventListener('click', () => {
             const selectedId = store.get('selectedTrackId');
@@ -172,7 +216,7 @@ export class DOMController {
                 this.opsLog.addEntry('DESTINATION', selectedId, 'CLEARED');
                 this.updateTrackTable();
                 
-                const track = this.trackManager.getTrackData().find(t => t.id === selectedId);
+                const track = this.trackManager.getTrackById(selectedId);
                 if(track) this.updateActiveTrackPanel(track);
                 store.set('selectedTrackId', selectedId); // Force re-render of visuals
             }
@@ -222,12 +266,7 @@ export class DOMController {
         if(store.get('selectedTrackId') === id) return;
         store.set('selectedTrackId', id);
         store.set('reconMode', false);
-        const btnRecon = document.getElementById('btn-recon');
-        if (btnRecon) {
-            btnRecon.textContent = 'RECON [3DGS]';
-            btnRecon.style.background = 'var(--amber-alert)';
-            btnRecon.style.color = '#000';
-        }
+        this.deactivateRecon(id);
         
         const track = this.trackManager.getTrackById(id);
         if(track) {
@@ -240,6 +279,26 @@ export class DOMController {
         
         this.trackManager.updateSelectionVisuals(id);
         this.updateTrackTable();
+    }
+
+    deactivateRecon(trackId) {
+        const btnRecon = document.getElementById('btn-recon');
+        if (btnRecon) {
+            btnRecon.disabled = false;
+            btnRecon.style.display = 'block';
+            btnRecon.textContent = 'RECON [3DGS]';
+            btnRecon.style.background = 'var(--amber-alert)';
+            btnRecon.style.color = '#000';
+        }
+        
+        if (this.setDestinationButtonEl) this.setDestinationButtonEl.style.display = 'block';
+        if (this.clearDestinationButtonEl) this.clearDestinationButtonEl.style.display = 'block';
+        if (this.reconConfirmBtn) this.reconConfirmBtn.style.display = 'none';
+        if (this.reconAbortBtn) this.reconAbortBtn.style.display = 'none';
+        
+        if (this.trackManager) {
+            this.trackManager.hideReconSplat();
+        }
     }
 
     updateActiveTrackPanel(track) {
@@ -255,13 +314,7 @@ export class DOMController {
             store.set('reconMode', false);
             this.setDestinationButtonEl.classList.remove('active');
             this.setDestinationButtonEl.textContent = 'SET DEST';
-            
-            const btnRecon = document.getElementById('btn-recon');
-            if (btnRecon) {
-                btnRecon.textContent = 'RECON [3DGS]';
-                btnRecon.style.background = 'var(--amber-alert)';
-                btnRecon.style.color = '#000';
-            }
+            this.deactivateRecon(null);
             return;
         }
 

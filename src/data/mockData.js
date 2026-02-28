@@ -8,9 +8,9 @@ export const confidences = ['HIGH', 'MEDIUM', 'LOW'];
 
 const types = ['hostile', 'friendly', 'unknown'];
 const subtypes = {
-    hostile: ['ARMOR', 'MECH INF', 'ADA', 'MLRS', 'LOG', 'C2', 'UAS SWARM'],
-    friendly: ['MEU', 'CAV', 'SOF', 'FIRES', 'UAS SWARM'],
-    unknown: ['CONVOY', 'ROTARY', 'CIV', 'UAS SWARM']
+    hostile: ['ARMOR', 'MECH INF', 'ADA', 'MLRS', 'LOG', 'C2', 'UAS SWARM', 'XLUUV_ORCA', 'LUUV_SNAKEHEAD', 'MUUV_KNIFEFISH', 'SUUV_SANDSHARK'],
+    friendly: ['MEU', 'CAV', 'SOF', 'FIRES', 'UAS SWARM', 'XLUUV_ORCA', 'MUUV_KNIFEFISH'],
+    unknown: ['CONVOY', 'ROTARY', 'CIV', 'UAS SWARM', 'SUUV_SANDSHARK']
 };
 
 export const trackData = [];
@@ -24,7 +24,11 @@ export function loadScenario(profile = 'swarm') {
         { id: 'TK-4073', type: 'hostile', subtype: 'ADA', x: -5, y: -18, spd: 0, threat_level: 'HIGH', time_to_event_seconds: 300 },
         { id: 'TK-4074', type: 'hostile', subtype: 'MLRS', x: 18, y: 12, spd: 0, threat_level: 'HIGH', time_to_event_seconds: 20 },
         { id: 'BF-1001', type: 'friendly', subtype: 'MEU', x: -8, y: 20, spd: 15, threat_level: 'LOW', time_to_event_seconds: 999 },
-        { id: 'UK-7001', type: 'unknown', subtype: 'CONVOY', x: 25, y: -15, spd: 55, threat_level: 'MEDIUM', time_to_event_seconds: 300 }
+        { id: 'UK-7001', type: 'unknown', subtype: 'CONVOY', x: 25, y: -15, spd: 55, threat_level: 'MEDIUM', time_to_event_seconds: 300 },
+        { id: 'ORCA-H1', type: 'hostile', subtype: 'XLUUV_ORCA', x: 30, y: -20, spd: 8, threat_level: 'HIGH', time_to_event_seconds: 600 },
+        { id: 'ORCA-H2', type: 'hostile', subtype: 'XLUUV_ORCA', x: 32, y: -18, spd: 8, threat_level: 'HIGH', time_to_event_seconds: 600 },
+        { id: 'SNAKE-1', type: 'hostile', subtype: 'LUUV_SNAKEHEAD', x: -25, y: 15, spd: 10, threat_level: 'HIGH', time_to_event_seconds: 400 },
+        { id: 'SHARK-1', type: 'unknown', subtype: 'SUUV_SANDSHARK', x: 0, y: 30, spd: 5, threat_level: 'MEDIUM', time_to_event_seconds: 800 }
     );
 
     let count = 1500;

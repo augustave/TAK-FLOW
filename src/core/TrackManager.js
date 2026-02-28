@@ -200,7 +200,14 @@ export class TrackManager {
             });
         });
 
-        const buffer = new Float32Array(swarms.length * 7);
+        const subtypeToCode = {
+            'XLUUV_ORCA': 10,
+            'LUUV_SNAKEHEAD': 11,
+            'MUUV_KNIFEFISH': 12,
+            'SUUV_SANDSHARK': 13
+        };
+
+        const buffer = new Float32Array(swarms.length * 9);
         let idx = 0;
         this.numericTrackIdMap = new Map();
 
@@ -209,14 +216,17 @@ export class TrackManager {
             const tr = item.tr;
             
             const numId = parseInt(tr.t.id.replace(/\D/g, '')) || 0;
+            const subtypeCode = subtypeToCode[tr.t.subtype] || 0;
             this.numericTrackIdMap.set(numId, tr.t.id);
             buffer[idx++] = numId;
             buffer[idx++] = item.type === 'hostile' ? 1.0 : (item.type === 'friendly' ? 0.0 : 2.0);
             buffer[idx++] = tr.pos.x;
             buffer[idx++] = tr.pos.y;
+            buffer[idx++] = tr.z || 0.0;
             buffer[idx++] = tr.vel ? tr.vel.x : 0.0;
             buffer[idx++] = tr.vel ? tr.vel.y : 0.0;
             buffer[idx++] = tr.t.threat_level === 'HIGH' ? 1.0 : (tr.t.threat_level === 'MEDIUM' ? 0.5 : 0.0);
+            buffer[idx++] = subtypeCode;
         }
 
         const decoyState = store.get('decoySim') || {};
@@ -258,12 +268,21 @@ export class TrackManager {
             };
             
             if (this.instances[t.type]) {
-                const isSwarm = t.subtype === 'UAS SWARM';
+                const UUV_SUBTYPES = {
+                    'XLUUV_ORCA': { mass_kg: 50000, max_speed_kts: 8.0, turn_radius_m: 15.0 },
+                    'LUUV_SNAKEHEAD': { mass_kg: 3000, max_speed_kts: 10.0, turn_radius_m: 5.0 },
+                    'MUUV_KNIFEFISH': { mass_kg: 500, max_speed_kts: 12.0, turn_radius_m: 1.5 },
+                    'SUUV_SANDSHARK': { mass_kg: 30, max_speed_kts: 5.0, turn_radius_m: 0.2 }
+                };
+                const isSwarm = t.subtype === 'UAS SWARM' || UUV_SUBTYPES.hasOwnProperty(t.subtype);
                 const angle = Math.random() * Math.PI * 2;
                 this.instances[t.type].tracks.push({
                     t: t,
                     baseX: t.x, baseY: t.y, offset: Math.random() * Math.PI * 2,
                     isSwarm: isSwarm,
+                    isUUV: UUV_SUBTYPES.hasOwnProperty(t.subtype),
+                    uuvParams: UUV_SUBTYPES[t.subtype] || null,
+                    z: 0.0,
                     alerted: false, // Track if we've fired the 60s warning
                     pos: new THREE.Vector2(t.x, t.y),
                     vel: isSwarm ? new THREE.Vector2(Math.cos(angle), Math.sin(angle)).multiplyScalar((t.spd / 120) * 0.5 + 0.1) : null
@@ -346,7 +365,122 @@ export class TrackManager {
         this.emconMesh.userData = { isTrackInstancedMesh: true, type: 'emcon' };
         this.overlayGroup.add(this.emconMesh);
 
+        const uuvGeo = new THREE.ShapeGeometry((() => { 
+            const s = new THREE.Shape(); 
+            s.moveTo(-0.6, 0.2); 
+            s.lineTo(0.6, 0.2); 
+            s.lineTo(0.8, 0); 
+            s.lineTo(0.6, -0.2); 
+            s.lineTo(-0.6, -0.2); 
+            s.lineTo(-0.8, 0); 
+            s.closePath(); 
+            s.moveTo(-0.2, 0.2);
+            s.lineTo(-0.2, 0.5);
+            s.lineTo(0.1, 0.5);
+            s.lineTo(0.1, 0.2);
+            return s; 
+        })());
+        const uuvMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.9 });
+        this.uuvMesh = new THREE.InstancedMesh(uuvGeo, uuvMat, 500);
+        this.uuvMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this.uuvMesh.count = 0;
+        this.uuvMesh.userData = { isTrackInstancedMesh: true, type: 'uuv' };
+        this.overlayGroup.add(this.uuvMesh);
+
+        this.init3DGSReconSystem();
         this.setupSelectionVisuals();
+    }
+
+    init3DGSReconSystem() {
+        this.reconSplatGroup = new THREE.Group();
+        this.reconSplatGroup.visible = false;
+        
+        // Bounding Box
+        const boxGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+        const boxMat = new THREE.LineBasicMaterial({ color: 0x00FFFF, transparent: true, opacity: 0.8 });
+        this.reconBoundingBox = new THREE.LineSegments(boxGeo, boxMat);
+        this.reconSplatGroup.add(this.reconBoundingBox);
+
+        // Splat Points
+        const maxPoints = 10000;
+        const ptsGeo = new THREE.BufferGeometry();
+        const positions = new Float32Array(maxPoints * 3);
+        ptsGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        ptsGeo.setDrawRange(0, 0);
+
+        const pointFS = `
+            varying float vY;
+            uniform float uTime;
+            void main() {
+                // LiDAR Scanline Effect
+                float scan = (sin(uTime * 4.0 - vY * 10.0) + 1.0) * 0.5;
+                float alpha = 0.2 + (scan * 0.8);
+                vec3 baseColor = mix(vec3(0.0, 0.5, 0.8), vec3(0.0, 1.0, 1.0), scan);
+                gl_FragColor = vec4(baseColor, alpha);
+            }
+        `;
+        const pointVS = `
+            varying float vY;
+            void main() {
+                vY = position.y;
+                vec4 mvPosition = viewMatrix * modelMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * mvPosition;
+                gl_PointSize = 2.0;
+            }
+        `;
+
+        this.reconSplatMat = new THREE.ShaderMaterial({
+            fragmentShader: pointFS,
+            vertexShader: pointVS,
+            transparent: true,
+            depthWrite: false,
+            uniforms: { uTime: { value: 0 } },
+            blending: THREE.AdditiveBlending
+        });
+
+        this.reconPoints = new THREE.Points(ptsGeo, this.reconSplatMat);
+        this.reconSplatGroup.add(this.reconPoints);
+        
+        // Attach to overlay group to scale correctly relative to UI plane
+        this.overlayGroup.add(this.reconSplatGroup);
+    }
+
+    generateReconSplat(x, y, radius) {
+        this.reconSplatGroup.position.set(x, y, 0); 
+        
+        // Scale Box
+        const boundingSize = Math.max(radius * 1.5, 3.0);
+        this.reconBoundingBox.scale.set(boundingSize, boundingSize, boundingSize);
+        
+        const count = Math.floor(5000 + Math.random() * 5000); // 5k-10k
+        const posAttr = this.reconPoints.geometry.attributes.position;
+        const positions = posAttr.array;
+        
+        for (let i = 0; i < count; i++) {
+            // Distribute points spherically or cylindrically inside the box region
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(Math.random() * 2 - 1);
+            const r = Math.pow(Math.random(), 1/3) * (boundingSize / 2);
+            
+            positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);     // X
+            positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta); // Y
+            positions[i * 3 + 2] = r * Math.cos(phi);                   // Z
+        }
+        
+        // Normalize Y for shader scanline distribution
+        const maxR = boundingSize / 2;
+        for (let i = 0; i < count; i++) {
+            positions[i * 3 + 1] /= maxR; // Range ~[-1, 1]
+        }
+        
+        posAttr.needsUpdate = true;
+        this.reconPoints.geometry.setDrawRange(0, count);
+        this.reconSplatGroup.visible = true;
+    }
+
+    hideReconSplat() {
+        this.reconSplatGroup.visible = false;
+        this.reconPoints.geometry.setDrawRange(0, 0);
     }
 
     setupSelectionVisuals() {
@@ -415,9 +549,23 @@ export class TrackManager {
             }
         }
         
+        if (this.uuvMesh) {
+            this.overlayGroup.remove(this.uuvMesh);
+            this.uuvMesh.geometry.dispose();
+            this.uuvMesh.material.dispose();
+            this.uuvMesh = null;
+        }
+        
+        if (this.reconSplatGroup) {
+            this.hideReconSplat();
+        }
+        
         if (window.store) {
             window.store.set('selectedTrackId', null);
             window.store.set('reconMode', false);
+        }
+        if (this.opforWorker) {
+            this.opforWorker.postMessage({ type: 'RESET_STATE' });
         }
 
         this.latestRenderingBuffer = null;
@@ -473,6 +621,7 @@ export class TrackManager {
         const meshes = Object.values(this.instances).map(inst => inst.mesh).filter(m => m !== null);
         if (this.centroidMesh) meshes.push(this.centroidMesh);
         if (this.emconMesh) meshes.push(this.emconMesh);
+        if (this.uuvMesh) meshes.push(this.uuvMesh);
         return meshes;
     }
 
@@ -480,6 +629,8 @@ export class TrackManager {
         const type = hit.object.userData.type;
         if (type === 'emcon') {
             return this.emconIdMap ? this.emconIdMap[hit.instanceId] : null;
+        } else if (type === 'uuv') {
+            return this.uuvIdMap ? this.uuvIdMap[hit.instanceId] : null;
         } else if (type === 'centroid') {
             return this.centroidIdMap ? this.centroidIdMap[hit.instanceId] : null;
         } else if (type === 'hostile') {
@@ -584,11 +735,12 @@ export class TrackManager {
             const item = swarms[i];
             const tr = item.tr;
             const numId = parseInt(tr.t.id.replace(/\D/g, '')) || 0;
+            const isUUV = tr.isUUV;
             
             // Phase Transition: TRANSIT vs EMCON_EVASION
             const isEmconEvasion = this.emconMetaByNumericId.has(numId);
-            const ALIGN_WEIGHT = isEmconEvasion ? 0.2 : 2.0;
-            const COHESION_WEIGHT = isEmconEvasion ? 4.0 : 0.2;
+            const ALIGN_WEIGHT = isEmconEvasion ? (isUUV ? 0.0 : 0.2) : (isUUV ? 0.0 : 2.0);
+            const COHESION_WEIGHT = isEmconEvasion ? (isUUV ? 0.0 : 4.0) : (isUUV ? 0.0 : 0.2);
             
             const cx = Math.floor(tr.pos.x / CELL_SIZE);
             const cy = Math.floor(tr.pos.y / CELL_SIZE);
@@ -690,40 +842,71 @@ export class TrackManager {
                 targetForce.add(opforForce.multiplyScalar(2.0)); 
             }
 
-            // --- Newtonian Aerodynamic Integrator ---
+            // --- Newtonian Aerodynamic / Hydrodynamic Integrator ---
             const speed = tr.vel.length() || 0.1;
             const speedSq = speed * speed;
             const heading = tr.vel.clone().normalize();
             
-            const dragMag = 0.5 * RHO * speedSq * CD;
-            const dragForce = heading.clone().multiplyScalar(-dragMag);
-            
-            const liftMag = 0.5 * RHO * speedSq * CL; // Theoretical max lift if used
-            
-            const thrustMag = targetForce.dot(heading);
-            const thrustForce = heading.clone().multiplyScalar(Math.max(0.1, thrustMag)); // Prevent total stall
-            
-            const perpForce = targetForce.clone().sub(heading.clone().multiplyScalar(thrustMag));
-            let latAccel = perpForce.length() / MASS_KG;
-            let beta = Math.atan(latAccel / 9.81);
-            
-            // Clamp banking angle to 60 degrees max
-            if (beta > MAX_BANKING_RAD) {
-                beta = MAX_BANKING_RAD;
-                latAccel = Math.tan(beta) * 9.81;
-                perpForce.setLength(latAccel * MASS_KG);
+            if (isUUV) {
+                const uuv = tr.uuvParams;
+                const mass = uuv.mass_kg;
+                const maxSpeed = uuv.max_speed_kts;
+                
+                // Hydrodynamics: Water Drag = v^2 * 1023.0
+                const dragMag = 0.5 * 1023.0 * speedSq * 0.04;
+                const dragForce = heading.clone().multiplyScalar(-dragMag);
+                
+                // Depth oscillation between 0 and -30
+                tr.z = Math.sin(Date.now() / 20000 + tr.offset) * 30.0;
+                if (tr.z > 0) tr.z = 0; 
+                if (tr.t.threat_level === 'HIGH' && tr.t.time_to_event_seconds < 120) tr.z = -20;
+                
+                // Ocean Current Drift
+                const driftX = Math.sin(tr.pos.y * 0.05 + Date.now()/10000) * 0.5;
+                const driftY = Math.cos(tr.pos.x * 0.05 + Date.now()/10000) * 0.5;
+                targetForce.add(new THREE.Vector2(driftX, driftY).multiplyScalar(mass * 0.1));
+                
+                const thrustMag = targetForce.dot(heading);
+                const thrustForce = heading.clone().multiplyScalar(Math.max(0.1, thrustMag));
+                const perpForce = targetForce.clone().sub(heading.clone().multiplyScalar(thrustMag));
+                
+                const turnRateLimit = maxSpeed / Math.max(0.1, uuv.turn_radius_m);
+                let latAccel = perpForce.length() / mass;
+                const maxLatAccel = turnRateLimit * speed;
+                if (latAccel > maxLatAccel) {
+                    latAccel = maxLatAccel;
+                    perpForce.setLength(latAccel * mass);
+                }
+                
+                const totalForce = new THREE.Vector2().add(thrustForce).add(perpForce).add(dragForce);
+                const accel = totalForce.divideScalar(mass);
+                tr.vel.add(accel.multiplyScalar(dt));
+                if (tr.vel.lengthSq() > maxSpeed * maxSpeed) tr.vel.setLength(maxSpeed);
+            } else {
+                const dragMag = 0.5 * RHO * speedSq * CD;
+                const dragForce = heading.clone().multiplyScalar(-dragMag);
+                
+                const liftMag = 0.5 * RHO * speedSq * CL;
+                
+                const thrustMag = targetForce.dot(heading);
+                const thrustForce = heading.clone().multiplyScalar(Math.max(0.1, thrustMag)); 
+                
+                const perpForce = targetForce.clone().sub(heading.clone().multiplyScalar(thrustMag));
+                let latAccel = perpForce.length() / MASS_KG;
+                let beta = Math.atan(latAccel / 9.81);
+                
+                if (beta > MAX_BANKING_RAD) {
+                    beta = MAX_BANKING_RAD;
+                    latAccel = Math.tan(beta) * 9.81;
+                    perpForce.setLength(latAccel * MASS_KG);
+                }
+                
+                const totalForce = new THREE.Vector2().add(thrustForce).add(perpForce).add(dragForce);
+                const accel = totalForce.divideScalar(MASS_KG);
+                tr.vel.add(accel.multiplyScalar(dt));
+                if (tr.vel.lengthSq() > MAX_SPEED * MAX_SPEED) tr.vel.setLength(MAX_SPEED);
             }
             
-            const totalForce = new THREE.Vector2()
-                .add(thrustForce)
-                .add(perpForce)
-                .add(dragForce);
-                
-            const accel = totalForce.divideScalar(MASS_KG);
-            tr.vel.add(accel.multiplyScalar(dt));
-            
-            // Speed caps corresponding to drag equilibrium
-            if (tr.vel.lengthSq() > MAX_SPEED * MAX_SPEED) tr.vel.setLength(MAX_SPEED);
             tr.pos.add(tr.vel.clone().multiplyScalar(dt));
         }
 
@@ -795,6 +978,10 @@ export class TrackManager {
 
         if (this.emconMaterial) {
             this.emconMaterial.uniforms.uTime.value = t;
+        }
+
+        if (this.reconSplatMat) {
+            this.reconSplatMat.uniforms.uTime.value = t;
         }
 
         if (dt > 0 && effectiveMotion > 0) {
@@ -897,7 +1084,9 @@ export class TrackManager {
             let discreteCount = 0;
             let centroidCount = 0;
             let emconCount = 0;
+            let uuvCount = 0;
             this.centroidMesh.material.opacity = 0.9 * (1 - skinVal);
+            if (this.uuvMesh) this.uuvMesh.material.opacity = 0.9 * (1 - skinVal);
             
             const buffer = this.latestRenderingBuffer;
             const STRIDE = 10;
@@ -906,6 +1095,7 @@ export class TrackManager {
             this.hostileIdMap = {};
             this.centroidIdMap = {};
             this.emconIdMap = {};
+            this.uuvIdMap = {};
             const liveTrackState = new Map();
 
             for (let i = 0; i < buffer.length; i += STRIDE) {
@@ -923,11 +1113,13 @@ export class TrackManager {
                 
                 const isCentroid = entityType === 1.0;
                 const isEmcon = entityType === 2.0;
+                const isUUV_Surfaced = entityType === 3.0;
+                const isUUV_Submerged = entityType === 4.0;
                 
                 let strId = `SW-${numericId}`;
                 if (isCentroid) {
                     strId = `CENTROID-${numericId}`;
-                } else if (isEmcon) {
+                } else if (isEmcon || isUUV_Submerged) {
                     const emconData = this.emconMetaByNumericId.get(numericId);
                     if (emconData) strId = emconData.realId || emconData.id || strId;
                 } else if (numericId < 0 && this.ghostMetaByNumericId.has(numericId)) {
@@ -942,7 +1134,7 @@ export class TrackManager {
 
                 const baseSc = isSelected ? 1.15 + Math.sin(t * 3) * 0.12 : 1 + Math.sin(t * 2) * 0.15;
                 
-                if (isEmcon) {
+                if (isEmcon || isUUV_Submerged) {
                     this.emconIdMap[emconCount] = strId;
                     if (this.emconConfidenceAttr) this.emconConfidenceAttr.setX(emconCount, threat);
                     dummy.scale.setScalar(radius);
@@ -955,10 +1147,29 @@ export class TrackManager {
                         this.selectionGroup.scale.setScalar(radius * 1.5);
                         
                         this.lockRing.visible = false;
-                        this.bracketLine.material.color = new THREE.Color(0xff8800);
+                        this.bracketLine.material.color = new THREE.Color(isUUV_Submerged ? 0x0088ff : 0xff8800);
                         this.bracketLine.material.opacity = 0.5 * (1 - skinVal);
                     }
                     emconCount++;
+                } else if (isUUV_Surfaced) {
+                    this.uuvIdMap[uuvCount] = strId;
+                    dummy.scale.setScalar(baseSc * 1.5);
+                    dummy.updateMatrix();
+                    if (this.uuvMesh) this.uuvMesh.setMatrixAt(uuvCount, dummy.matrix);
+                    
+                    if (isSelected) {
+                        selectedTrackPos = { x, y };
+                        this.selectionGroup.position.set(x, y, 0.2);
+                        this.selectionGroup.scale.setScalar(baseSc * 1.5);
+                        
+                        const pulse = (Math.sin(t * 7) + 1) * 0.5;
+                        this.lockRing.material.opacity = (0.18 + pulse * 0.35) * (1 - skinVal);
+                        this.lockRing.scale.setScalar(1.0 + pulse * 0.28);
+                        this.bracketLine.material.opacity = 1.0 * (1 - skinVal);
+                        this.bracketLine.material.color = new THREE.Color(0x00ffff);
+                        this.lockRing.visible = true;
+                    }
+                    uuvCount++;
                 } else if (!isCentroid) {
                     this.hostileIdMap[discreteCount] = strId;
                     dummy.scale.setScalar(baseSc);
@@ -1020,6 +1231,12 @@ export class TrackManager {
             this.emconMesh.instanceMatrix.needsUpdate = true;
             if (this.emconConfidenceAttr) this.emconConfidenceAttr.needsUpdate = true;
             if (this.emconMesh.geometry.boundingSphere === null) this.emconMesh.geometry.computeBoundingSphere();
+            
+            if (this.uuvMesh) {
+                this.uuvMesh.count = uuvCount;
+                this.uuvMesh.instanceMatrix.needsUpdate = true;
+                if (this.uuvMesh.geometry.boundingSphere === null) this.uuvMesh.geometry.computeBoundingSphere();
+            }
         }
 
         if (!selectedId || !selectedTrackPos) {

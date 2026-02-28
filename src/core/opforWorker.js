@@ -135,9 +135,32 @@ const EMCON_CONFIDENCE_DECAY_PER_SEC = 0.01;
 const EMCON_LOST_CONFIDENCE_THRESHOLD = 0.05;
 const EMCON_MAX_RADIUS_KM = 20.0;
 const lostTrackNotified = new Set();
+const forcedConfidenceById = new Map(); // TrackId -> expiry timestamp
+const FORCED_CONFIDENCE_TTL_MS = 180000;
 const ghostTracks = new Map(); // numericId -> { id, x, y, yaw, confidence, expiresAt }
 let nextGhostId = -1;
 let lastDecoyBurstCount = 0;
+
+// Phase 16: Pheromone Data Layer
+const pheromoneGrid = new Map(); // "x,y" -> level
+const PHEROMONE_DECAY_RATE = 0.005;
+
+let envFriendlyTargets = [];
+let envSamZones = [];
+
+function evaporatePheromones() {
+    for (let [key, level] of pheromoneGrid.entries()) {
+        const newLevel = level > 0 ? 
+            Math.max(0, level - PHEROMONE_DECAY_RATE) : 
+            Math.min(0, level + PHEROMONE_DECAY_RATE);
+            
+        if (Math.abs(newLevel) < 0.001) {
+            pheromoneGrid.delete(key);
+        } else {
+            pheromoneGrid.set(key, newLevel);
+        }
+    }
+}
 
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -147,6 +170,29 @@ function maybeEmitTrackLost(trackId) {
     if (lostTrackNotified.has(trackId)) return;
     lostTrackNotified.add(trackId);
     self.postMessage({ type: 'TRACK_LOST', id: trackId });
+}
+
+function normalizeForcedTrackId(rawId) {
+    if (typeof rawId !== 'string') return '';
+    const tkMatch = /^TK-(\d+)$/.exec(rawId);
+    if (tkMatch) return `SW-${tkMatch[1]}`;
+    return rawId;
+}
+
+function setForcedConfidenceTrack(rawId, nowTs) {
+    const normalized = normalizeForcedTrackId(rawId);
+    if (!normalized) return;
+    forcedConfidenceById.set(normalized, nowTs + FORCED_CONFIDENCE_TTL_MS);
+}
+
+function isForcedTrackConfirmed(trackId, nowTs) {
+    const expiresAt = forcedConfidenceById.get(trackId);
+    if (!expiresAt) return false;
+    if (expiresAt <= nowTs) {
+        forcedConfidenceById.delete(trackId);
+        return false;
+    }
+    return true;
 }
 
 function getOrCreateEmconState(idStr, x, y, vx, vy, now, initialConfidence) {
@@ -224,6 +270,29 @@ function updateGhostTracks(decoyActive, decoyBurstCount, now) {
 // Listen for the Float32Array from the main thread
 self.onmessage = function(e) {
     const payload = e.data || {};
+    
+    // Non-buffer payloads (e.g. system overrides)
+    if (payload.type === 'FORCE_CONFIDENCE' && payload.id) {
+        setForcedConfidenceTrack(payload.id, performance.now());
+        return;
+    }
+
+    if (payload.type === 'RESET_STATE') {
+        emconState.clear();
+        lostTrackNotified.clear();
+        ghostTracks.clear();
+        forcedConfidenceById.clear();
+        pheromoneGrid.clear();
+        lastDecoyBurstCount = 0;
+        return;
+    }
+    
+    if (payload.type === 'SYNC_ENV') {
+        envFriendlyTargets = payload.targets || [];
+        envSamZones = payload.threats || [];
+        return;
+    }
+
     const dataBuffer = payload instanceof ArrayBuffer ? payload : payload.buffer;
     if (!dataBuffer) return;
     const rawData = new Float32Array(dataBuffer);
@@ -233,24 +302,28 @@ self.onmessage = function(e) {
     tacticalState.hostiles.length = 0;
     tacticalState.friendlies.length = 0;
     
-    // Format: [id, allegiance, x, y, vx, vy, threat] (Stride = 7)
-    for (let i = 0; i < rawData.length; i += 7) {
+    // Format: [id, allegiance, x, y, z, vx, vy, threat, subtypeCode] (Stride = 9)
+    for (let i = 0; i < rawData.length; i += 9) {
         const id = rawData[i];
         const allegiance = rawData[i+1];
         const x = rawData[i+2];
         const y = rawData[i+3];
-        const vx = rawData[i+4];
-        const vy = rawData[i+5];
-        const threat = rawData[i+6];
+        const z = rawData[i+4];
+        const vx = rawData[i+5];
+        const vy = rawData[i+6];
+        const threat = rawData[i+7];
+        const subtypeCode = rawData[i+8];
         
         if (id === 0 && x === 0 && y === 0) continue; 
 
         if (allegiance === 1.0) { // 1 = Hostile
-            tacticalState.hostiles.push({ id, x, y, vx, vy, threat, desiredVector: {x: 0, y: 0} });
+            tacticalState.hostiles.push({ id, x, y, z, vx, vy, threat, subtypeCode, desiredVector: {x: 0, y: 0} });
         } else if (allegiance === 0.0) { // 0 = Friendly
-            tacticalState.friendlies.push({ id, x, y, vx, vy, threat });
+            tacticalState.friendlies.push({ id, x, y, z, vx, vy, threat, subtypeCode });
         }
     }
+    
+    evaporatePheromones();
     
     // 1. Behavior Tree Intents
     const intentsBuffer = new Float32Array(tacticalState.hostiles.length * 4); // [id, vx, vy, vz]
@@ -264,14 +337,107 @@ self.onmessage = function(e) {
         const cx = Math.floor(h.x / CELL_SIZE);
         const cy = Math.floor(h.y / CELL_SIZE);
         const key = `${cx},${cy}`;
-        if (!grid.has(key)) grid.set(key, []);
-        grid.get(key).push(h);
+        if (!grid.has(key)) grid.set(key, { hostiles: [], cx, cy });
+        grid.get(key).hostiles.push(h);
+    }
+    
+    // Evaluate behavioral intents + Pheromone Logic per spatial cell to save O(m*n) limits
+    for (let [key, cellData] of grid.entries()) {
+        const { cx, cy, hostiles } = cellData;
+        const cellCenter = { x: (cx + 0.5) * CELL_SIZE, y: (cy + 0.5) * CELL_SIZE };
         
-        opforBrain.evaluate(h, tacticalState);
-        intentsBuffer[wIdx++] = h.id;
-        intentsBuffer[wIdx++] = h.desiredVector.x;
-        intentsBuffer[wIdx++] = h.desiredVector.y;
-        intentsBuffer[wIdx++] = 0.0;
+        // 1. Find nearest targets relative to cell center
+        let nearestFriendly = null;
+        let nearestFriendlyDistSq = Infinity;
+        for (let f of envFriendlyTargets) {
+            const dx = f.x - cellCenter.x;
+            const dy = f.y - cellCenter.y;
+            const dSq = dx*dx + dy*dy;
+            if (dSq < nearestFriendlyDistSq) {
+                nearestFriendlyDistSq = dSq;
+                nearestFriendly = f;
+            }
+        }
+        
+        let nearestSam = null;
+        let nearestSamDistSq = Infinity;
+        for (let s of envSamZones) {
+            const dx = s.x - cellCenter.x;
+            const dy = s.y - cellCenter.y;
+            const dSq = dx*dx + dy*dy;
+            if (dSq < nearestSamDistSq) {
+                nearestSamDistSq = dSq;
+                nearestSam = s;
+            }
+        }
+        
+        // 2. Evaluate drones within cell
+        for (let h of hostiles) {
+            opforBrain.evaluate(h, tacticalState);
+            
+            // Ant Logic: Trace Deposition
+            if (nearestSam && nearestSamDistSq <= (nearestSam.radius * nearestSam.radius)) {
+                // Inside Threat Zone: Massive negative trace
+                const currentP = pheromoneGrid.get(key) || 0;
+                pheromoneGrid.set(key, Math.max(-50.0, currentP - 5.0)); // Ineffective Trace
+            } else if (nearestFriendly) {
+                // Dot Product to see if closing distance
+                const vxTarget = nearestFriendly.x - h.x;
+                const vyTarget = nearestFriendly.y - h.y;
+                const dot = (h.vx * vxTarget) + (h.vy * vyTarget);
+                
+                if (dot > 0) {
+                    const currentP = pheromoneGrid.get(key) || 0;
+                    pheromoneGrid.set(key, Math.min(50.0, currentP + 0.1)); // Validated Trace
+                }
+            }
+            
+            // Ant Logic: Gradient Sampling (Gradient Ascent)
+            let maxPheromone = -Infinity;
+            let bestGradientVec = { x: 0, y: 0 };
+            
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const neighborKey = `${cx+dx},${cy+dy}`;
+                    const nLevel = pheromoneGrid.get(neighborKey) || 0;
+                    
+                    if (nLevel > maxPheromone && nLevel > 0) {
+                        maxPheromone = nLevel;
+                        bestGradientVec.x = dx;
+                        bestGradientVec.y = dy;
+                    } else if (nLevel < -2.0 && dx === 0 && dy === 0) {
+                        // Current cell is highly toxic, push away from center
+                        bestGradientVec.x = h.vx; // Keep moving
+                        bestGradientVec.y = h.vy;
+                    }
+                }
+            }
+            
+            // Normalize Gradient
+            const gLen = Math.sqrt(bestGradientVec.x*bestGradientVec.x + bestGradientVec.y*bestGradientVec.y);
+            if (gLen > 0) {
+                bestGradientVec.x /= gLen;
+                bestGradientVec.y /= gLen;
+            }
+            
+            // Fuse Intent + Gradient into Steer Force
+            const PHEROMONE_WEIGHT = 1.5;
+            h.desiredVector.x += bestGradientVec.x * PHEROMONE_WEIGHT;
+            h.desiredVector.y += bestGradientVec.y * PHEROMONE_WEIGHT;
+            
+            // Normalize final intent vector
+            const vLen = Math.sqrt(h.desiredVector.x*h.desiredVector.x + h.desiredVector.y*h.desiredVector.y);
+            if (vLen > 0) {
+                h.desiredVector.x /= vLen;
+                h.desiredVector.y /= vLen;
+            }
+            
+            intentsBuffer[wIdx++] = h.id;
+            intentsBuffer[wIdx++] = h.desiredVector.x;
+            intentsBuffer[wIdx++] = h.desiredVector.y;
+            intentsBuffer[wIdx++] = 0.0;
+        }
     }
 
     const clusteredHostiles = new Set();
@@ -285,7 +451,7 @@ self.onmessage = function(e) {
             for (let dy = -1; dy <= 1; dy++) {
                 const nKey = `${cx+dx},${cy+dy}`;
                 if (grid.has(nKey)) {
-                    for (let h of grid.get(nKey)) {
+                    for (let h of grid.get(nKey).hostiles) {
                         if (!clusteredHostiles.has(h.id)) localHostiles.push(h);
                     }
                 }
@@ -359,9 +525,14 @@ self.onmessage = function(e) {
     
     for (let c of centroids) {
         let isEmcon = false;
-        for (let z of EW_ZONES) {
-            const dx = c.x - z.x, dy = c.y - z.y;
-            if (dx*dx + dy*dy < z.radius * z.radius) { isEmcon = true; break; }
+        const stringId = `CENTROID-${c.id}`;
+        const isForcedConfirmed = isForcedTrackConfirmed(stringId, now);
+
+        if (!isForcedConfirmed) {
+            for (let z of EW_ZONES) {
+                const dx = c.x - z.x, dy = c.y - z.y;
+                if (dx*dx + dy*dy < z.radius * z.radius) { isEmcon = true; break; }
+            }
         }
         
         const idStr = 'C' + c.id;
@@ -387,6 +558,7 @@ self.onmessage = function(e) {
 
             if (state.confidence <= EMCON_LOST_CONFIDENCE_THRESHOLD || ghostRadius > EMCON_MAX_RADIUS_KM) {
                 emconState.delete(idStr);
+                forcedConfidenceById.delete(stringId);
                 maybeEmitTrackLost(`CENTROID-${c.id}`);
                 continue;
             }
@@ -435,9 +607,20 @@ self.onmessage = function(e) {
     for (let h of tacticalState.hostiles) {
         if (!clusteredHostiles.has(h.id)) {
             let isEmcon = false;
-            for (let z of EW_ZONES) {
-                const dx = h.x - z.x, dy = h.y - z.y;
-                if (dx*dx + dy*dy < z.radius * z.radius) { isEmcon = true; break; }
+            const stringId = `SW-${h.id}`;
+            const isForcedConfirmed = isForcedTrackConfirmed(stringId, now);
+            const isUUV = (h.subtypeCode >= 10 && h.subtypeCode <= 13);
+            const isSubmerged = isUUV && h.z < -0.1;
+
+            if (!isForcedConfirmed) {
+                if (isSubmerged) {
+                    isEmcon = true;
+                } else {
+                    for (let z of EW_ZONES) {
+                        const dx = h.x - z.x, dy = h.y - z.y;
+                        if (dx*dx + dy*dy < z.radius * z.radius) { isEmcon = true; break; }
+                    }
+                }
             }
             
             const idStr = 'T' + h.id;
@@ -455,14 +638,22 @@ self.onmessage = function(e) {
                 const bankAngle = clamp(Math.atan(latAccel / 9.81), 0, 1.047);
                 state.lastYawTs = now; state.lastVx = h.vx; state.lastVy = h.vy;
 
-                const baseExpansionRate = MAX_VELOCITY * 0.5;
-                const shapeWarpFactor = 0.8;
-                const ghostRadius = 0.5 + (baseExpansionRate * timeLossSec) + (Math.abs(bankAngle) * speed * shapeWarpFactor);
+                let ghostRadius = 0.5;
+                if (isUUV) {
+                    const distTraveled = speed * timeLossSec;
+                    ghostRadius = 0.5 + (0.001 * distTraveled);
+                } else {
+                    const baseExpansionRate = MAX_VELOCITY * 0.5;
+                    const shapeWarpFactor = 0.8;
+                    ghostRadius = 0.5 + (baseExpansionRate * timeLossSec) + (Math.abs(bankAngle) * speed * shapeWarpFactor);
+                }
+                
                 const radiusFade = clamp(1.0 - ((ghostRadius - 15.0) / 5.0), 0.0, 1.0);
                 const renderConfidence = state.confidence * radiusFade;
 
                 if (state.confidence <= EMCON_LOST_CONFIDENCE_THRESHOLD || ghostRadius > EMCON_MAX_RADIUS_KM) {
                     emconState.delete(idStr);
+                    forcedConfidenceById.delete(stringId);
                     maybeEmitTrackLost(`SW-${h.id}`);
                     continue;
                 }
@@ -470,7 +661,7 @@ self.onmessage = function(e) {
                 appendRenderRow(
                     renderRows,
                     h.id,
-                    2.0,
+                    isUUV ? 4.0 : 2.0,
                     state.lastX,
                     state.lastY,
                     0.0,
@@ -495,10 +686,10 @@ self.onmessage = function(e) {
                 appendRenderRow(
                     renderRows,
                     h.id,
-                    0.0,
+                    isUUV ? 3.0 : 1.0,
                     h.x,
                     h.y,
-                    0.0,
+                    h.z,
                     Math.atan2(h.vy, h.vx) + Math.PI / 2,
                     Math.sqrt(h.vx * h.vx + h.vy * h.vy),
                     0.0,

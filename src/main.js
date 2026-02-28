@@ -239,6 +239,7 @@ function selectRelativeTrack(step) {
 // Logic: Animate
 let lastFrameTs = 0;
 let lastHiddenRenderTs = 0;
+let lastEnvSyncTs = 0;
 const compassNeedle = document.getElementById('compass-needle');
 
 function animate(ts) {
@@ -249,6 +250,28 @@ function animate(ts) {
 
     if(document.hidden && ts - lastHiddenRenderTs < 160) return;
     if(document.hidden) lastHiddenRenderTs = ts;
+
+    // 1Hz Environment Sync (Pheromone Logic)
+    if (ts - lastEnvSyncTs >= 1000) {
+        lastEnvSyncTs = ts;
+        const targets = trackManager.getTrackData()
+            .filter(t => t.type === 'friendly')
+            .map(t => ({ x: t.x, y: t.y }));
+        
+        // Match UI engagement zones panel
+        const threats = [
+            { x: -15.0, y: 20.0, radius: 15.0 }, // SAM-1
+            { x: 30.0, y: -25.0, radius: 35.0 }  // SAM-2
+        ];
+        
+        if (trackManager.opforWorker) {
+            trackManager.opforWorker.postMessage({
+                type: 'SYNC_ENV',
+                targets,
+                threats
+            });
+        }
+    }
 
     const reduceMotion = store.get('reduceMotion');
     const motionScale = reduceMotion ? 0.45 : 1.0;
