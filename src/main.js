@@ -24,6 +24,18 @@ const domController = new DOMController(trackManager, opsLog);
 const drawController = new DrawController(mapEngine.scene, mapEngine.overlayGroup);
 const splatController = new SplatController(mapEngine.scene, mapEngine.overlayGroup);
 
+opsLog.setExportContext(() => ({
+    store,
+    mapEngine,
+    trackManager,
+    sigintFeed,
+    decoySim,
+    hudController,
+    domController,
+    drawController,
+    splatController
+}));
+
 // Logic: Interactions
 const raycaster = new THREE.Raycaster();
 const mClick = new THREE.Vector2();
