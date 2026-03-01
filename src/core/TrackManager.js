@@ -62,6 +62,12 @@ export class TrackManager {
             com: new THREE.Vector2(),
             activeCount: 0
         };
+        this.counterfactualScanState = {
+            active: false,
+            x: 0,
+            y: 0,
+            radius: 12
+        };
 
         // Phase 13: OPFOR Web Worker
         this.initOpforWorker();
@@ -392,6 +398,8 @@ export class TrackManager {
     }
 
     init3DGSReconSystem() {
+        if (this.reconSplatGroup) return;
+
         this.reconSplatGroup = new THREE.Group();
         this.reconSplatGroup.visible = false;
         
@@ -443,6 +451,7 @@ export class TrackManager {
         
         // Attach to overlay group to scale correctly relative to UI plane
         this.overlayGroup.add(this.reconSplatGroup);
+        this.initCounterfactualScanOverlay();
     }
 
     generateReconSplat(x, y, radius) {
@@ -481,6 +490,80 @@ export class TrackManager {
     hideReconSplat() {
         this.reconSplatGroup.visible = false;
         this.reconPoints.geometry.setDrawRange(0, 0);
+    }
+
+    initCounterfactualScanOverlay() {
+        if (this.counterfactualScanGroup) return;
+
+        this.counterfactualScanGroup = new THREE.Group();
+        this.counterfactualScanGroup.visible = false;
+
+        const outerGeo = new THREE.RingGeometry(0.9, 1.0, 72);
+        const outerMat = new THREE.MeshBasicMaterial({
+            color: 0xff8800,
+            transparent: true,
+            opacity: 0.45,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        this.counterfactualOuterRing = new THREE.Mesh(outerGeo, outerMat);
+        this.counterfactualOuterRing.position.z = 0.03;
+        this.counterfactualScanGroup.add(this.counterfactualOuterRing);
+
+        const innerGeo = new THREE.RingGeometry(0.5, 0.58, 64);
+        const innerMat = new THREE.MeshBasicMaterial({
+            color: 0xffc266,
+            transparent: true,
+            opacity: 0.28,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        this.counterfactualInnerRing = new THREE.Mesh(innerGeo, innerMat);
+        this.counterfactualInnerRing.position.z = 0.032;
+        this.counterfactualScanGroup.add(this.counterfactualInnerRing);
+
+        this.overlayGroup.add(this.counterfactualScanGroup);
+    }
+
+    showCounterfactualScanZone(x, y, radius = 12) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+        this.counterfactualScanState = {
+            active: true,
+            x,
+            y,
+            radius: THREE.MathUtils.clamp(Number(radius) || 12, 6, 20)
+        };
+        if (this.counterfactualScanGroup) this.counterfactualScanGroup.visible = true;
+        return true;
+    }
+
+    hideCounterfactualScanZone() {
+        this.counterfactualScanState.active = false;
+        if (this.counterfactualScanGroup) this.counterfactualScanGroup.visible = false;
+    }
+
+    executeWideAreaReconMacro(x, y, radius = 12) {
+        const ok = this.showCounterfactualScanZone(x, y, radius);
+        if (!ok) return false;
+        this.generateReconSplat(x, y, this.counterfactualScanState.radius);
+        return true;
+    }
+
+    updateCounterfactualScanOverlay(t, skinVal) {
+        if (!this.counterfactualScanGroup || !this.counterfactualScanState.active) {
+            if (this.counterfactualScanGroup) this.counterfactualScanGroup.visible = false;
+            return;
+        }
+
+        const state = this.counterfactualScanState;
+        const pulse = (Math.sin(t * 2.6) + 1) * 0.5;
+        const expand = 1.0 + pulse * 0.35;
+        this.counterfactualScanGroup.visible = true;
+        this.counterfactualScanGroup.position.set(state.x, state.y, 0.03);
+        this.counterfactualOuterRing.scale.setScalar(state.radius * expand);
+        this.counterfactualInnerRing.scale.setScalar(state.radius * (0.58 + pulse * 0.12));
+        this.counterfactualOuterRing.material.opacity = (0.26 + pulse * 0.22) * (1 - skinVal);
+        this.counterfactualInnerRing.material.opacity = (0.15 + (1 - pulse) * 0.15) * (1 - skinVal);
     }
 
     setupSelectionVisuals() {
@@ -558,6 +641,9 @@ export class TrackManager {
         
         if (this.reconSplatGroup) {
             this.hideReconSplat();
+        }
+        if (this.counterfactualScanGroup) {
+            this.hideCounterfactualScanZone();
         }
         
         if (window.store) {
@@ -983,6 +1069,7 @@ export class TrackManager {
         if (this.reconSplatMat) {
             this.reconSplatMat.uniforms.uTime.value = t;
         }
+        this.updateCounterfactualScanOverlay(t, skinVal);
 
         if (dt > 0 && effectiveMotion > 0) {
             this.updateSwarmBoids(dt * effectiveMotion);

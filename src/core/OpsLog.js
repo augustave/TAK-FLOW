@@ -218,6 +218,12 @@ export class OpsLog {
                 confidenceScore: selectedConfidenceScore,
                 destination: this.safeClone(selectedDestination)
             },
+            overlays: {
+                reconSplatVisible: Boolean(trackManager?.reconSplatGroup?.visible),
+                reconPointDrawCount: trackManager?.reconPoints?.geometry?.drawRange?.count ?? 0,
+                counterfactualScanVisible: Boolean(trackManager?.counterfactualScanGroup?.visible)
+            },
+            counterfactualScanState: this.safeClone(trackManager?.counterfactualScanState || {}),
             instances
         };
     }
@@ -297,7 +303,15 @@ export class OpsLog {
             sortDir: domController?.sortDir || 1,
             pendingDesignationStage: store.get('pendingDesignationStage'),
             confirmStripVisible: domController?.confirmStrip?.style?.display !== 'none',
-            alertText: domController?.alertTextEl?.textContent || ''
+            alertText: domController?.alertTextEl?.textContent || '',
+            recommendedActions: {
+                badge: domController?.recommendedActionsBadgeEl?.textContent || '',
+                panelCritical: domController?.recommendedActionsPanelEl?.classList?.contains('critical') || false,
+                decoySuppressed: domController?.decoySimPanelEl?.classList?.contains('superseded') || false,
+                vjepaWarningActive: Boolean(domController?.vjepaWarningActive),
+                vjepaHoverActive: Boolean(domController?.vjepaHoverActive),
+                vjepaAnchor: this.safeClone(domController?.vjepaAnchor || null)
+            }
         };
     }
 

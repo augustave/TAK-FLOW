@@ -49,12 +49,18 @@ The project is built emphasizing maximum runtime execution speed and minimal dep
 *   **Zero-Trust SIGINT Ghosts**: Decoy simulation bursts can now inject synthetic low-confidence (`<0.5`) ghost tracks with non-kinematic jumps to emulate spoofed emissions.
 *   **Designation Guardrails**: Strike designation is blocked for tracks under `0.6` confidence unless the operator explicitly overrides through `RECON [3DGS]`, with amber warning feedback and audit logging.
 
+### Phase 18: Red-Team Predictive Guardrails
+*   **V-JEPA Anxiety Warning Gate**: `DOMController` now evaluates `swarmTelemetry` in real-time and raises a high-priority amber advisory when `(cohesion <= 0.05 && milling >= 0.40 && activeCount > 100)`.
+*   **Recommended Actions Panel**: Added a dedicated panel that escalates the V-JEPA warning over generic decoy guidance to prevent operator complacency during EW-driven swarm fractures.
+*   **3DGS Counterfactual Binding**: Hovering the critical recommendation projects an expanding ring overlay over the swarm telemetry anchor; clicking `[EXECUTE]` instantly drops a wide-area `RECON [3DGS]` macro splat.
+*   **Exported Telemetry Expansion**: Telemetry reports now include recommended-action state and counterfactual overlay runtime fields, improving after-action traceability.
+
 ## Running Locally
 1. Clone the repository.
 2. Serve the root directory using any local web server (e.g., `python3 -m http.server 8080` or `npx serve`).
 3. Navigate to `http://localhost:8080` (or `http://localhost:5500` if using Live Server) in any modern WebGL-compatible browser.
 
 ## Next Steps
-- Add deterministic replay capture for EMCON decay/cull events to support after-action review.
+- Add deterministic replay capture for V-JEPA advisory onset/clear transitions and macro execution timing.
 - Expand ghost-track profiles (RF signature families, timed spoof windows, and operator training presets).
-- Add automated browser-level scenario tests to validate designation guardrails and EW fade behavior end-to-end.
+- Add automated browser-level scenario tests to validate recommendation supersession and counterfactual hover overlays end-to-end.

@@ -42,6 +42,12 @@ export class DOMController {
         this.domCoh = document.getElementById('kinematics-cohesion');
         this.barCoh = document.getElementById('bar-cohesion');
         this.kinematicsBadge = document.getElementById('kinematics-badge');
+        this.recommendedActionsPanelEl = document.getElementById('recommended-actions-panel');
+        this.recommendedActionsBadgeEl = document.getElementById('rec-actions-badge');
+        this.recDecoyCardEl = document.getElementById('rec-decoy-card');
+        this.recVjepaCardEl = document.getElementById('rec-vjepa-card');
+        this.recExecuteBtnEl = document.getElementById('btn-rec-execute');
+        this.decoySimPanelEl = document.getElementById('decoy-sim-panel');
 
         this.cursorCoords = document.getElementById('cursor-coords');
         this.cursorMgrs = document.getElementById('cursor-mgrs');
@@ -52,6 +58,10 @@ export class DOMController {
         this.destinationMode = false;
         this.provenanceFlashIntervalId = null;
         this.provenanceFlashTimeoutId = null;
+        this.vjepaWarningActive = false;
+        this.vjepaWarningLogged = false;
+        this.vjepaHoverActive = false;
+        this.vjepaAnchor = null;
 
         // Make clearUndoWindow globally available for OpsLog clear
         window.clearUndoWindow = () => this.clearUndoWindow();
@@ -250,6 +260,15 @@ export class DOMController {
                 btnMap.classList.toggle('active', !isTopo);
             });
         }
+
+        if (this.recVjepaCardEl) {
+            this.recVjepaCardEl.addEventListener('mouseenter', () => this.setVjepaHover(true));
+            this.recVjepaCardEl.addEventListener('mouseleave', () => this.setVjepaHover(false));
+            this.recVjepaCardEl.addEventListener('focus', () => this.setVjepaHover(true));
+            this.recVjepaCardEl.addEventListener('blur', () => this.setVjepaHover(false));
+        }
+
+        this.recExecuteBtnEl?.addEventListener('click', () => this.executeVjepaReconMacro());
 
         document.addEventListener('mousemove', e => {
             if(!this.cursorCoords || !this.cursorMgrs) return;
@@ -652,6 +671,104 @@ export class DOMController {
         this.clearUndoWindow();
     }
 
+    isVjepaThreatAnxietyCondition(telemetry) {
+        if (!telemetry) return false;
+        return telemetry.cohesion <= 0.05 && telemetry.milling >= 0.40 && telemetry.activeCount > 100;
+    }
+
+    getVjepaAnchor(telemetry) {
+        const com = telemetry?.com;
+        if (!com || !Number.isFinite(com.x) || !Number.isFinite(com.y)) return null;
+        return { x: com.x, y: com.y };
+    }
+
+    getVjepaScanRadius(telemetry) {
+        const activeCount = Number(telemetry?.activeCount) || 0;
+        return Math.max(10, Math.min(18, 8 + (activeCount * 0.04)));
+    }
+
+    setVjepaHover(active) {
+        this.vjepaHoverActive = Boolean(active);
+        this.syncVjepaCounterfactualOverlay();
+    }
+
+    syncVjepaCounterfactualOverlay() {
+        if (!this.trackManager) return;
+        if (this.vjepaWarningActive && this.vjepaHoverActive && this.vjepaAnchor) {
+            this.trackManager.showCounterfactualScanZone(
+                this.vjepaAnchor.x,
+                this.vjepaAnchor.y,
+                this.getVjepaScanRadius(this.trackManager.getSwarmTelemetry())
+            );
+            return;
+        }
+        this.trackManager.hideCounterfactualScanZone();
+    }
+
+    executeVjepaReconMacro() {
+        if (!this.vjepaWarningActive || !this.vjepaAnchor || !this.trackManager) return;
+        const telemetry = this.trackManager.getSwarmTelemetry();
+        const radius = this.getVjepaScanRadius(telemetry);
+        const executed = this.trackManager.executeWideAreaReconMacro(this.vjepaAnchor.x, this.vjepaAnchor.y, radius);
+        if (!executed) return;
+
+        this.opsLog.addEntry(
+            'MODE',
+            '3DGS',
+            `[ EXECUTE ] WIDE-AREA RECON TASKED OVER SWARM MEDIAN (${this.vjepaAnchor.x.toFixed(2)}, ${this.vjepaAnchor.y.toFixed(2)})`,
+            1,
+            120
+        );
+    }
+
+    updateRecommendedActions(telemetry) {
+        const isCritical = this.isVjepaThreatAnxietyCondition(telemetry);
+        this.vjepaWarningActive = isCritical;
+        this.vjepaAnchor = isCritical ? this.getVjepaAnchor(telemetry) : null;
+
+        if (isCritical) {
+            if (!this.vjepaWarningLogged) {
+                this.opsLog.addEntry(
+                    'WARNING',
+                    'V-JEPA',
+                    'SWARM FRACTURE DETECTED. PREDICTIVE RE-MERGE LIKELY OUTSIDE EW COVER. WIDE-AREA 3DGS RECON RECOMMENDED.',
+                    1,
+                    180
+                );
+                this.vjepaWarningLogged = true;
+            }
+        } else {
+            this.vjepaWarningLogged = false;
+            this.vjepaHoverActive = false;
+        }
+
+        if (this.recommendedActionsPanelEl && this.recommendedActionsBadgeEl) {
+            this.recommendedActionsPanelEl.classList.toggle('critical', isCritical);
+            this.recommendedActionsBadgeEl.textContent = isCritical ? 'CRITICAL' : 'STANDBY';
+            this.recommendedActionsBadgeEl.className = isCritical
+                ? 'panel-badge badge-alert'
+                : 'panel-badge badge-nominal';
+        }
+
+        if (this.recDecoyCardEl) {
+            this.recDecoyCardEl.style.display = isCritical ? 'none' : 'block';
+        }
+        if (this.recVjepaCardEl) {
+            this.recVjepaCardEl.style.display = isCritical ? 'block' : 'none';
+            this.recVjepaCardEl.classList.toggle('flash', isCritical);
+        }
+        if (this.decoySimPanelEl) {
+            this.decoySimPanelEl.classList.toggle('superseded', isCritical);
+        }
+        if (this.recExecuteBtnEl) {
+            const canExecute = isCritical && Boolean(this.vjepaAnchor);
+            this.recExecuteBtnEl.disabled = !canExecute;
+            this.recExecuteBtnEl.style.opacity = canExecute ? '1' : '0.45';
+        }
+
+        this.syncVjepaCounterfactualOverlay();
+    }
+
     update() {
         if (!this.trackManager || !this.domPol) return;
         
@@ -665,6 +782,7 @@ export class DOMController {
             this.barCoh.style.width = '0%';
             this.kinematicsBadge.textContent = 'NO LOC';
             this.kinematicsBadge.className = 'panel-badge badge-warning';
+            this.updateRecommendedActions(telemetry);
             return;
         }
 
@@ -698,5 +816,7 @@ export class DOMController {
             this.kinematicsBadge.style.background = 'var(--panel-bg)';
             this.kinematicsBadge.style.color = '#fff';
         }
+
+        this.updateRecommendedActions(telemetry);
     }
 }

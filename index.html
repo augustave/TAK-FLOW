@@ -402,6 +402,29 @@
             </div>
         </div>
 
+        <div class="panel" style="flex: 0 0 auto;" id="recommended-actions-panel">
+            <div class="panel-header">
+                <span class="panel-title">RECOMMENDED ACTIONS</span>
+                <span class="panel-badge badge-nominal" id="rec-actions-badge">STANDBY</span>
+            </div>
+            <div class="panel-body">
+                <div id="recommended-actions-list">
+                    <div class="recommendation-card recommendation-generic" id="rec-decoy-card">
+                        <div class="recommendation-label">STANDARD</div>
+                        <div class="recommendation-text">[ RECOMMENDED ACTION: DEPLOY DECOY BURST TO DILUTE HOSTILE TRACK PRIORITIZATION. ]</div>
+                    </div>
+                    <div class="recommendation-card recommendation-critical" id="rec-vjepa-card" style="display: none;" tabindex="0">
+                        <div class="recommendation-label">PRIORITY ALPHA</div>
+                        <div class="recommendation-text" id="rec-vjepa-warning">[ TAK-G SYSTEM ADVISORY ] SWARM IS CURRENTLY FRACTURED (COHESION NEAR 0). WARNING: V-JEPA LATENT MODEL PREDICTS SWARM WILL INITIATE TOPOLOGICAL FOLDING AND RE-MERGE ONCE CLEAR OF EW ZONE.</div>
+                        <div class="recommendation-text recommendation-cta" id="rec-vjepa-recommendation">[ RECOMMENDED ACTION: INITIATE WIDE-AREA 3DGS RECON TO ESTABLISH PROVENANCE BEFORE RE-ASSEMBLY. ]</div>
+                        <div class="hud-controls-row" style="margin-top: 8px;">
+                            <button id="btn-rec-execute" class="hud-btn rec-execute-btn">[ EXECUTE ] RECON [3DGS]</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- INSTRUCTOR OPS -->
         <div class="panel" style="flex: 0 0 auto;" id="instructor-panel">
             <div class="panel-header">
