@@ -68,6 +68,27 @@ export class TrackManager {
             y: 0,
             radius: 12
         };
+        this.upfConfig = {
+            coneRadius: 12.0,
+            nonPrimaryOpacity: 0.15
+        };
+        this.upfFocusState = {
+            active: false,
+            coneX: 0,
+            coneY: 0,
+            radius: this.upfConfig.coneRadius,
+            radiusSq: this.upfConfig.coneRadius * this.upfConfig.coneRadius,
+            cursorX: 0,
+            cursorY: 0,
+            primaryId: null,
+            primaryConfidence: 0,
+            candidateIds: new Set(),
+            lastUpdatedMs: 0
+        };
+        this.upfTrackedIds = new Set();
+        this.upfPrimaryWorldPos = null;
+        this._upfColorA = new THREE.Color();
+        this._upfColorB = new THREE.Color();
 
         // Phase 13: OPFOR Web Worker
         this.initOpforWorker();
@@ -319,7 +340,7 @@ export class TrackManager {
         });
 
         const centroidGeo = new THREE.RingGeometry(0.8, 1.0, 32);
-        const centroidMat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+        const centroidMat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.9, side: THREE.DoubleSide, vertexColors: true });
         this.centroidMesh = new THREE.InstancedMesh(centroidGeo, centroidMat, 50); // max 50 centroids
         this.centroidMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.centroidMesh.count = 0;
@@ -329,6 +350,7 @@ export class TrackManager {
         const emconFS = `
             varying vec2 vUv;
             varying float vConfidence;
+            varying float vFocusWeight;
             uniform float uTime;
             void main() {
                 float d = distance(vUv, vec2(0.5));
@@ -337,7 +359,7 @@ export class TrackManager {
                 // Threat Confidence dictates GLSL alpha decay rate 
                 float baseAlpha = (1.0 - (d * 2.0)) * (0.3 + 0.4 * pulse);
                 float decayRate = pow(clamp(vConfidence, 0.0, 1.0), 1.5);
-                float alpha = min(baseAlpha * decayRate, 0.6);
+                float alpha = min(baseAlpha * decayRate * clamp(vFocusWeight, 0.0, 1.0), 0.6);
                 vec3 color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 0.2, 0.2), 1.0 - (d * 2.0));
                 gl_FragColor = vec4(color, alpha);
             }
@@ -345,10 +367,13 @@ export class TrackManager {
         const emconVS = `
             varying vec2 vUv;
             varying float vConfidence;
+            varying float vFocusWeight;
             attribute float aConfidence;
+            attribute float aFocusWeight;
             void main() {
                 vUv = uv;
                 vConfidence = aConfidence;
+                vFocusWeight = aFocusWeight;
                 vec4 mvPosition = viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
             }
@@ -364,7 +389,9 @@ export class TrackManager {
         
         const emconGeo = new THREE.PlaneGeometry(2, 2);
         this.emconConfidenceAttr = new THREE.InstancedBufferAttribute(new Float32Array(2000), 1);
+        this.emconFocusAttr = new THREE.InstancedBufferAttribute(new Float32Array(2000), 1);
         emconGeo.setAttribute('aConfidence', this.emconConfidenceAttr);
+        emconGeo.setAttribute('aFocusWeight', this.emconFocusAttr);
         this.emconMesh = new THREE.InstancedMesh(emconGeo, this.emconMaterial, 2000);
         this.emconMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.emconMesh.count = 0;
@@ -386,7 +413,7 @@ export class TrackManager {
             s.lineTo(0.1, 0.2);
             return s; 
         })());
-        const uuvMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.9 });
+        const uuvMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.9, vertexColors: true });
         this.uuvMesh = new THREE.InstancedMesh(uuvGeo, uuvMat, 500);
         this.uuvMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.uuvMesh.count = 0;
@@ -594,6 +621,67 @@ export class TrackManager {
         this.destLine = new THREE.Line(destLineGeo, destLineMat);
         this.destLine.visible = false;
         this.overlayGroup.add(this.destLine);
+
+        this.initUpfAttentionOverlay();
+    }
+
+    initUpfAttentionOverlay() {
+        if (this.upfAttentionGroup) return;
+        this.upfAttentionGroup = new THREE.Group();
+        this.upfAttentionGroup.visible = false;
+
+        const hexPts = [];
+        const hexRadius = 1.35;
+        for (let i = 0; i < 6; i++) {
+            const a0 = (Math.PI / 3) * i;
+            const a1 = (Math.PI / 3) * ((i + 1) % 6);
+            hexPts.push(new THREE.Vector3(Math.cos(a0) * hexRadius, Math.sin(a0) * hexRadius, 0.05));
+            hexPts.push(new THREE.Vector3(Math.cos(a1) * hexRadius, Math.sin(a1) * hexRadius, 0.05));
+        }
+        const hexGeo = new THREE.BufferGeometry().setFromPoints(hexPts);
+        const hexMat = new THREE.LineBasicMaterial({
+            color: 0xffcc33,
+            transparent: true,
+            opacity: 0.0
+        });
+        this.upfPrimaryBracket = new THREE.LineSegments(hexGeo, hexMat);
+        this.upfAttentionGroup.add(this.upfPrimaryBracket);
+
+        const guideGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+        const guideMat = new THREE.LineBasicMaterial({
+            color: 0xffc266,
+            transparent: true,
+            opacity: 0.0
+        });
+        this.upfGuideLine = new THREE.Line(guideGeo, guideMat);
+        this.upfGuideLine.visible = false;
+        this.overlayGroup.add(this.upfGuideLine);
+
+        this.overlayGroup.add(this.upfAttentionGroup);
+    }
+
+    updateUpfAttentionOverlay(t, skinVal) {
+        if (!this.upfAttentionGroup || !this.upfGuideLine) return;
+
+        const focus = this.upfFocusState;
+        if (!focus.active || !focus.primaryId || !this.upfPrimaryWorldPos) {
+            this.upfAttentionGroup.visible = false;
+            this.upfGuideLine.visible = false;
+            return;
+        }
+
+        const pulse = (Math.sin(t * 9.0) + 1.0) * 0.5;
+        this.upfAttentionGroup.visible = true;
+        this.upfAttentionGroup.position.set(this.upfPrimaryWorldPos.x, this.upfPrimaryWorldPos.y, 0.09);
+        this.upfAttentionGroup.scale.setScalar(1.0 + (pulse * 0.22));
+        this.upfPrimaryBracket.material.opacity = (0.35 + (pulse * 0.55)) * (1 - skinVal);
+
+        this.upfGuideLine.visible = true;
+        this.upfGuideLine.geometry.setFromPoints([
+            new THREE.Vector3(focus.cursorX, focus.cursorY, 0.07),
+            new THREE.Vector3(this.upfPrimaryWorldPos.x, this.upfPrimaryWorldPos.y, 0.07)
+        ]);
+        this.upfGuideLine.material.opacity = (0.25 + (pulse * 0.45)) * (1 - skinVal);
     }
 
     resetScenario(profile) {
@@ -645,6 +733,10 @@ export class TrackManager {
         if (this.counterfactualScanGroup) {
             this.hideCounterfactualScanZone();
         }
+        this.clearSpatialConeFocus();
+        this.upfPrimaryWorldPos = null;
+        if (this.upfAttentionGroup) this.upfAttentionGroup.visible = false;
+        if (this.upfGuideLine) this.upfGuideLine.visible = false;
         
         if (window.store) {
             window.store.set('selectedTrackId', null);
@@ -760,6 +852,151 @@ export class TrackManager {
         const prov = this.provenanceByTrackId[id];
         if (prov) return this.confidenceLabelToScore(prov.confidence);
         return 0.0;
+    }
+
+    clearSpatialConeFocus() {
+        const prevCursorX = this.upfFocusState.cursorX || 0;
+        const prevCursorY = this.upfFocusState.cursorY || 0;
+        this.upfFocusState = {
+            active: false,
+            coneX: 0,
+            coneY: 0,
+            radius: this.upfConfig.coneRadius,
+            radiusSq: this.upfConfig.coneRadius * this.upfConfig.coneRadius,
+            cursorX: prevCursorX,
+            cursorY: prevCursorY,
+            primaryId: null,
+            primaryConfidence: 0,
+            candidateIds: new Set(),
+            lastUpdatedMs: Date.now()
+        };
+        this.upfTrackedIds = new Set();
+    }
+
+    setSpatialConeFocus(coneX, coneY, cursorX, cursorY, radius = this.upfConfig.coneRadius) {
+        if (!Number.isFinite(coneX) || !Number.isFinite(coneY)) {
+            this.clearSpatialConeFocus();
+            return null;
+        }
+
+        const resolvedRadius = Math.max(2.0, Number(radius) || this.upfConfig.coneRadius);
+        const radiusSq = resolvedRadius * resolvedRadius;
+        const candidates = [];
+        const byId = new Map();
+        const consider = (id, x, y, confidence, entityType) => {
+            if (!id || !Number.isFinite(x) || !Number.isFinite(y)) return;
+            const dx = x - coneX;
+            const dy = y - coneY;
+            const distSq = (dx * dx) + (dy * dy);
+            if (distSq > radiusSq) return;
+            const nextCandidate = {
+                id,
+                x,
+                y,
+                confidence: THREE.MathUtils.clamp(Number(confidence) || 0, 0, 1),
+                entityType: Number(entityType) || 0,
+                distSq
+            };
+            const existing = byId.get(id);
+            if (!existing || nextCandidate.confidence > existing.confidence || (nextCandidate.confidence === existing.confidence && nextCandidate.distSq < existing.distSq)) {
+                byId.set(id, nextCandidate);
+            }
+        };
+
+        this.liveTrackStateById.forEach((state, id) => {
+            consider(id, state.x, state.y, state.confidence, state.entityType);
+        });
+        this.getTrackData().forEach((track) => {
+            consider(track.id, track.x, track.y, this.getTrackConfidenceScore(track.id), 0);
+        });
+        byId.forEach((value) => candidates.push(value));
+
+        if (candidates.length === 0) {
+            this.clearSpatialConeFocus();
+            this.upfFocusState.cursorX = Number.isFinite(cursorX) ? cursorX : coneX;
+            this.upfFocusState.cursorY = Number.isFinite(cursorY) ? cursorY : coneY;
+            this.upfFocusState.coneX = coneX;
+            this.upfFocusState.coneY = coneY;
+            this.upfFocusState.radius = resolvedRadius;
+            this.upfFocusState.radiusSq = radiusSq;
+            return null;
+        }
+
+        candidates.sort((a, b) => {
+            if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+            return a.distSq - b.distSq;
+        });
+
+        const primary = candidates[0];
+        this.upfTrackedIds = new Set(candidates.map(c => c.id));
+        this.upfFocusState = {
+            active: true,
+            coneX,
+            coneY,
+            radius: resolvedRadius,
+            radiusSq,
+            cursorX: Number.isFinite(cursorX) ? cursorX : coneX,
+            cursorY: Number.isFinite(cursorY) ? cursorY : coneY,
+            primaryId: primary.id,
+            primaryConfidence: primary.confidence,
+            candidateIds: this.upfTrackedIds,
+            lastUpdatedMs: Date.now()
+        };
+
+        return {
+            primaryId: primary.id,
+            candidateCount: candidates.length,
+            primaryConfidence: primary.confidence
+        };
+    }
+
+    resolveSpatialConeSelection(clickX, clickY) {
+        const focus = this.upfFocusState;
+        if (!focus.active || !focus.primaryId) return null;
+        if (!Number.isFinite(clickX) || !Number.isFinite(clickY)) return null;
+        const dx = clickX - focus.coneX;
+        const dy = clickY - focus.coneY;
+        const distSq = (dx * dx) + (dy * dy);
+        if (distSq > focus.radiusSq) return null;
+        return focus.primaryId;
+    }
+
+    getUpfTrackRole(trackId) {
+        if (!trackId || !this.upfFocusState.active) return 0;
+        if (!this.upfFocusState.candidateIds.has(trackId)) return 0;
+        return this.upfFocusState.primaryId === trackId ? 1 : 2;
+    }
+
+    getUpfAdjustedColor(baseColor, trackId, t) {
+        const role = this.getUpfTrackRole(trackId);
+        if (role === 0) return baseColor;
+
+        if (role === 1) {
+            const pulse = (Math.sin(t * 8.5) + 1.0) * 0.5;
+            this._upfColorA.copy(baseColor);
+            this._upfColorB.setHex(0xffd34d);
+            this._upfColorA.lerp(this._upfColorB, 0.45 + (pulse * 0.35));
+            return this._upfColorA;
+        }
+
+        this._upfColorA.copy(baseColor).multiplyScalar(this.upfConfig.nonPrimaryOpacity);
+        return this._upfColorA;
+    }
+
+    getUpfFocusSnapshot() {
+        return {
+            active: Boolean(this.upfFocusState.active),
+            coneX: this.upfFocusState.coneX,
+            coneY: this.upfFocusState.coneY,
+            radius: this.upfFocusState.radius,
+            cursorX: this.upfFocusState.cursorX,
+            cursorY: this.upfFocusState.cursorY,
+            primaryId: this.upfFocusState.primaryId,
+            primaryConfidence: this.upfFocusState.primaryConfidence,
+            candidateCount: this.upfFocusState.candidateIds.size,
+            candidateIds: Array.from(this.upfFocusState.candidateIds.values()),
+            lastUpdatedMs: this.upfFocusState.lastUpdatedMs
+        };
     }
 
     setDestination(id, destObj) {
@@ -1079,12 +1316,14 @@ export class TrackManager {
         const dummy = new THREE.Object3D();
         let selectedTrackData = null;
         let selectedTrackPos = null;
+        this.upfPrimaryWorldPos = null;
 
         Object.keys(this.instances).forEach(type => {
             const inst = this.instances[type];
             if(!inst.mesh) return;
             
-            inst.mesh.material.opacity = 0.82 * (1 - skinVal);
+            const baseTypeOpacity = type === 'unknown' ? 0.25 : 0.82;
+            inst.mesh.material.opacity = baseTypeOpacity * (1 - skinVal);
             
             if (type !== 'hostile') {
                 const color = new THREE.Color();
@@ -1113,7 +1352,10 @@ export class TrackManager {
                     dummy.rotation.set(0, 0, timeAngle);
                     
                     const isSelected = tr.t.id === selectedId;
-                    const sc = isSelected ? 1.15 + Math.sin(t * 3 + tr.offset) * 0.12 : 1 + Math.sin(t * 2 + tr.offset) * 0.15;
+                    const upfRole = this.getUpfTrackRole(tr.t.id);
+                    let sc = isSelected ? 1.15 + Math.sin(t * 3 + tr.offset) * 0.12 : 1 + Math.sin(t * 2 + tr.offset) * 0.15;
+                    if (upfRole === 1) sc *= 1.2 + (((Math.sin(t * 9.0) + 1) * 0.5) * 0.18);
+                    if (upfRole === 2) sc *= 0.85;
                     dummy.scale.setScalar(sc);
                     
                     if (effectiveMotion > 0) {
@@ -1127,13 +1369,15 @@ export class TrackManager {
                         }
                         const urgentPulse = (Math.sin(t * 15 + tr.offset) + 1) * 0.5;
                         color.setHex(urgentPulse > 0.5 ? 0xffffff : 0xff0000);
-                        inst.mesh.setColorAt(i, color);
+                        inst.mesh.setColorAt(i, this.getUpfAdjustedColor(color, tr.t.id, t));
                     } else {
-                        inst.mesh.setColorAt(i, this.typeColors[type]);
+                        inst.mesh.setColorAt(i, this.getUpfAdjustedColor(this.typeColors[type], tr.t.id, t));
                     }
                     
                     dummy.updateMatrix();
                     inst.mesh.setMatrixAt(i, dummy.matrix);
+
+                    if (upfRole === 1) this.upfPrimaryWorldPos = { x: px, y: py };
                     
                     if (isSelected) {
                         selectedTrackData = tr.t;
@@ -1218,13 +1462,18 @@ export class TrackManager {
                 liveTrackState.set(strId, { x, y, speed, radius, confidence: threat, entityType });
                 
                 const isSelected = strId === selectedId;
+                const upfRole = this.getUpfTrackRole(strId);
+                if (upfRole === 1) this.upfPrimaryWorldPos = { x, y };
 
-                const baseSc = isSelected ? 1.15 + Math.sin(t * 3) * 0.12 : 1 + Math.sin(t * 2) * 0.15;
+                let baseSc = isSelected ? 1.15 + Math.sin(t * 3) * 0.12 : 1 + Math.sin(t * 2) * 0.15;
+                if (upfRole === 1) baseSc *= 1.24 + (((Math.sin(t * 9.0) + 1) * 0.5) * 0.16);
+                if (upfRole === 2) baseSc *= 0.82;
                 
                 if (isEmcon || isUUV_Submerged) {
                     this.emconIdMap[emconCount] = strId;
                     if (this.emconConfidenceAttr) this.emconConfidenceAttr.setX(emconCount, threat);
-                    dummy.scale.setScalar(radius);
+                    if (this.emconFocusAttr) this.emconFocusAttr.setX(emconCount, upfRole === 2 ? this.upfConfig.nonPrimaryOpacity : 1.0);
+                    dummy.scale.setScalar(upfRole === 2 ? radius * 0.85 : radius);
                     dummy.updateMatrix();
                     this.emconMesh.setMatrixAt(emconCount, dummy.matrix);
                     
@@ -1242,7 +1491,11 @@ export class TrackManager {
                     this.uuvIdMap[uuvCount] = strId;
                     dummy.scale.setScalar(baseSc * 1.5);
                     dummy.updateMatrix();
-                    if (this.uuvMesh) this.uuvMesh.setMatrixAt(uuvCount, dummy.matrix);
+                    if (this.uuvMesh) {
+                        this.uuvMesh.setMatrixAt(uuvCount, dummy.matrix);
+                        this._upfColorB.setHex(0x00ffff);
+                        this.uuvMesh.setColorAt(uuvCount, this.getUpfAdjustedColor(this._upfColorB, strId, t));
+                    }
                     
                     if (isSelected) {
                         selectedTrackPos = { x, y };
@@ -1263,9 +1516,9 @@ export class TrackManager {
                     if (threat > 0.8) {
                         const urgentPulse = (Math.sin(t * 15) + 1) * 0.5;
                         color.setHex(urgentPulse > 0.5 ? 0xffffff : 0xff0000);
-                        this.instances.hostile.mesh.setColorAt(discreteCount, color);
+                        this.instances.hostile.mesh.setColorAt(discreteCount, this.getUpfAdjustedColor(color, strId, t));
                     } else {
-                        this.instances.hostile.mesh.setColorAt(discreteCount, this.typeColors.hostile);
+                        this.instances.hostile.mesh.setColorAt(discreteCount, this.getUpfAdjustedColor(this.typeColors.hostile, strId, t));
                     }
                     
                     dummy.updateMatrix();
@@ -1286,9 +1539,12 @@ export class TrackManager {
                     discreteCount++;
                 } else {
                     this.centroidIdMap[centroidCount] = strId;
-                    dummy.scale.setScalar((radius * 0.8) + (Math.sin(t * 4) * 0.15));
+                    const centroidScale = (radius * 0.8) + (Math.sin(t * 4) * 0.15);
+                    dummy.scale.setScalar(upfRole === 2 ? centroidScale * 0.82 : centroidScale);
                     dummy.updateMatrix();
                     this.centroidMesh.setMatrixAt(centroidCount, dummy.matrix);
+                    this._upfColorB.setHex(0xff3333);
+                    this.centroidMesh.setColorAt(centroidCount, this.getUpfAdjustedColor(this._upfColorB, strId, t));
                     
                     if (isSelected) {
                         selectedTrackPos = { x, y };
@@ -1312,16 +1568,19 @@ export class TrackManager {
 
             this.centroidMesh.count = centroidCount;
             this.centroidMesh.instanceMatrix.needsUpdate = true;
+            if (this.centroidMesh.instanceColor) this.centroidMesh.instanceColor.needsUpdate = true;
             if (this.centroidMesh.geometry.boundingSphere === null) this.centroidMesh.geometry.computeBoundingSphere();
             
             this.emconMesh.count = emconCount;
             this.emconMesh.instanceMatrix.needsUpdate = true;
             if (this.emconConfidenceAttr) this.emconConfidenceAttr.needsUpdate = true;
+            if (this.emconFocusAttr) this.emconFocusAttr.needsUpdate = true;
             if (this.emconMesh.geometry.boundingSphere === null) this.emconMesh.geometry.computeBoundingSphere();
             
             if (this.uuvMesh) {
                 this.uuvMesh.count = uuvCount;
                 this.uuvMesh.instanceMatrix.needsUpdate = true;
+                if (this.uuvMesh.instanceColor) this.uuvMesh.instanceColor.needsUpdate = true;
                 if (this.uuvMesh.geometry.boundingSphere === null) this.uuvMesh.geometry.computeBoundingSphere();
             }
         }
@@ -1349,5 +1608,7 @@ export class TrackManager {
                 this.destLine.visible = false;
             }
         }
+
+        this.updateUpfAttentionOverlay(t, skinVal);
     }
 }

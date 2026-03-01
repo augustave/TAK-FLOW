@@ -221,9 +221,12 @@ export class OpsLog {
             overlays: {
                 reconSplatVisible: Boolean(trackManager?.reconSplatGroup?.visible),
                 reconPointDrawCount: trackManager?.reconPoints?.geometry?.drawRange?.count ?? 0,
-                counterfactualScanVisible: Boolean(trackManager?.counterfactualScanGroup?.visible)
+                counterfactualScanVisible: Boolean(trackManager?.counterfactualScanGroup?.visible),
+                upfAttentionVisible: Boolean(trackManager?.upfAttentionGroup?.visible),
+                upfGuideLineVisible: Boolean(trackManager?.upfGuideLine?.visible)
             },
             counterfactualScanState: this.safeClone(trackManager?.counterfactualScanState || {}),
+            upfFocusState: this.safeClone(trackManager?.getUpfFocusSnapshot?.() || {}),
             instances
         };
     }

@@ -55,6 +55,12 @@ The project is built emphasizing maximum runtime execution speed and minimal dep
 *   **3DGS Counterfactual Binding**: Hovering the critical recommendation projects an expanding ring overlay over the swarm telemetry anchor; clicking `[EXECUTE]` instantly drops a wide-area `RECON [3DGS]` macro splat.
 *   **Exported Telemetry Expansion**: Telemetry reports now include recommended-action state and counterfactual overlay runtime fields, improving after-action traceability.
 
+### Phase 19: Uncertain Pointer Framework (UPF)
+*   **Spatial Selection Cone**: Mouse hover now projects a localized cone on the map and evaluates nearby active tracks using squared-distance checks for low-overhead clustering.
+*   **Primary Target Resolution**: Captured cone candidates are ranked by live confidence, and the highest-confidence candidate is promoted to primary focus.
+*   **Identity & Level Design**: Non-primary cone captures are dampened, while the primary target receives an amber pulsing hex-bracket plus a glowing pointer-to-target guide line.
+*   **Feedforward Auto-Select**: Clicking loosely inside the cone now resolves to the primary target without requiring pixel-perfect raycast hits.
+
 ## Running Locally
 1. Clone the repository.
 2. Serve the root directory using any local web server (e.g., `python3 -m http.server 8080` or `npx serve`).

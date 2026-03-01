@@ -39,6 +39,7 @@ opsLog.setExportContext(() => ({
 // Logic: Interactions
 const raycaster = new THREE.Raycaster();
 const mClick = new THREE.Vector2();
+const SPATIAL_CONE_RADIUS = 12.0;
 
 function getTrackFromObject(object) {
     let current = object;
@@ -68,6 +69,17 @@ window.addEventListener('mousedown', e => {
         return; // Prevent normal map interactions while drawing
     }
 
+    const mapHits = raycaster.intersectObject(mapEngine.mapMesh);
+    const selectedTrackId = store.get('selectedTrackId');
+    if(mapHits.length > 0 && !selectedTrackId && !domController.destinationMode) {
+        const localPoint = mapEngine.overlayGroup.worldToLocal(mapHits[0].point.clone());
+        const autoSelectedTrackId = trackManager.resolveSpatialConeSelection(localPoint.x, -localPoint.z);
+        if (autoSelectedTrackId) {
+            domController.selectTrack(autoSelectedTrackId);
+            return;
+        }
+    }
+
     const trackHits = raycaster.intersectObjects(trackManager.getTrackMeshes(), false);
     if(trackHits.length > 0) {
         const hit = trackHits[0];
@@ -78,8 +90,6 @@ window.addEventListener('mousedown', e => {
         }
     }
 
-    const mapHits = raycaster.intersectObject(mapEngine.mapMesh);
-    const selectedTrackId = store.get('selectedTrackId');
     if(mapHits.length > 0 && selectedTrackId) {
         const p = mapHits[0].point;
         if(domController.destinationMode) {
@@ -133,8 +143,11 @@ window.addEventListener('mousedown', e => {
 });
 
 window.addEventListener('mousemove', e => {
-    if(!drawController.isDrawing) return;
-    
+    if(e.target.closest('#hud .panel') || e.target.closest('#skin-toggle') || e.target.closest('#confirm-strip') || e.target.closest('#undo-strip') || e.target.closest('.drawer-toggle')) {
+        trackManager.clearSpatialConeFocus();
+        return;
+    }
+
     mClick.x = (e.clientX / window.innerWidth) * 2 - 1;
     mClick.y = -(e.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mClick, mapEngine.camera);
@@ -142,8 +155,16 @@ window.addEventListener('mousemove', e => {
     const mapHits = raycaster.intersectObject(mapEngine.mapMesh);
     if(mapHits.length > 0) {
         const localPoint = mapEngine.overlayGroup.worldToLocal(mapHits[0].point.clone());
-        drawController.updatePreview(localPoint);
+        const cursorX = localPoint.x;
+        const cursorY = -localPoint.z;
+        trackManager.setSpatialConeFocus(cursorX, cursorY, cursorX, cursorY, SPATIAL_CONE_RADIUS);
+        if(drawController.isDrawing) {
+            drawController.updatePreview(localPoint);
+        }
+        return;
     }
+
+    trackManager.clearSpatialConeFocus();
 });
 
 // Setup hook inside commitDesignation 
