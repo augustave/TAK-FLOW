@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "check:worker": "node --check src/core/opforWorker.js",
+    "check:bundle": "npx esbuild src/main.js --bundle --format=esm --outfile=/tmp/tak-smoke.js",
+    "check": "npm run check:worker && npm run check:bundle",
+    "test": "npm run check"
   },
   "keywords": [],
   "author": "",

@@ -237,6 +237,7 @@ function updateGhostTracks(decoyActive, decoyBurstCount, now) {
 
     for (let ghost of ghostTracks.values()) {
         if (!decoyActive || now >= ghost.expiresAt) {
+            forcedConfidenceById.delete(`GHOST-${Math.abs(ghost.id)}`);
             ghostTracks.delete(ghost.id);
             continue;
         }
@@ -701,6 +702,10 @@ self.onmessage = function(e) {
     }
 
     for (let ghost of ghostTracks.values()) {
+        const ghostTrackId = `GHOST-${Math.abs(ghost.id)}`;
+        const isForcedConfirmed = isForcedTrackConfirmed(ghostTrackId, now);
+        const renderConfidence = isForcedConfirmed ? 1.0 : ghost.confidence;
+
         appendRenderRow(
             renderRows,
             ghost.id,
@@ -712,14 +717,14 @@ self.onmessage = function(e) {
             0.0,
             0.0,
             1.0,
-            ghost.confidence
+            renderConfidence
         );
         ghostUiTracks.push({
-            id: `GHOST-${Math.abs(ghost.id)}`,
+            id: ghostTrackId,
             numericId: ghost.id,
             x: ghost.x,
             y: ghost.y,
-            confidence: ghost.confidence
+            confidence: renderConfidence
         });
     }
 

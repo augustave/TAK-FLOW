@@ -82,7 +82,7 @@ window.addEventListener('mousedown', e => {
             domController.setDestinationButtonEl.classList.remove('active');
             domController.setDestinationButtonEl.textContent = 'SET DEST';
             
-            const track = trackManager.getTrackData().find(t => t.id === selectedTrackId);
+            const track = trackManager.getTrackById(selectedTrackId);
             if(track) domController.updateActiveTrackPanel(track);
             return;
         }
