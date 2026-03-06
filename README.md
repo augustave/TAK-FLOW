@@ -1,7 +1,7 @@
-# TAK-G: Tactical Mosaic C2 Theater Simulator
+# TAK-H: Tactical Mosaic C2 Theater Simulator
 
 ## Overview
-TAK-G is a high-fidelity, theater-level Command and Control (C2) visualization prototype. Designed with a brutalist, typography-driven aesthetic, the simulator explores "Decision Intelligence" workflows—focusing on how an operator manages high-density, multi-domain tracks (1,500+ entities) with varying levels of trust, provenance, and predictive threat analytics.
+TAK-H is a high-fidelity, theater-level Command and Control (C2) visualization prototype. Designed with a brutalist, typography-driven aesthetic, the simulator explores "Decision Intelligence" workflows—focusing on how an operator manages high-density, multi-domain tracks (1,500+ entities) with varying levels of trust, provenance, and predictive threat analytics.
 
 The prototype simulates a degraded electronic warfare environment where tracks are probabilistic, and the system actively highlights critical, time-sensitive events while suppressing generic intelligence noise. The current build includes EMCON confidence-driven alpha decay, automatic lost-track culling, and zero-trust SIGINT ghost tracks.
 
