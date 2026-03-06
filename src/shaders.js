@@ -18,6 +18,7 @@ export const mapFS = `
     uniform float uMapMode;  // 1.0 = Topo, 0.0 = Flat
     uniform vec3 uSAMPositions[3];
     uniform float uSAMRadii[3];
+    uniform float uAlphaEarthData[64];
 
     float random(vec2 st) { return fract(sin(dot(st, vec2(12.9898,78.233))) * 43758.5453); }
     
@@ -45,6 +46,25 @@ export const mapFS = `
         vec2 q = vec2(fbm(uv + vec2(0.0, 0.0)), fbm(uv + vec2(5.2, 1.3)));
         vec2 r = vec2(fbm(uv + 4.0*q + vec2(1.7, 9.2) + 0.001*t), fbm(uv + 4.0*q + vec2(8.3, 2.8) + 0.001*t));
         return fbm(uv + 4.0*r);
+    }
+
+    // AlphaEarth Embedding Decoder
+    // Uses specific 64-D vector indices to modulate terrain properties
+    float alphaEarthTopography(vec2 uv, float t) {
+        // Pseudo-sample embedding dimensions
+        float crustalDensity = uAlphaEarthData[12]; // Dim 12: Lithosphere density proxy
+        float vegIndex = uAlphaEarthData[45];       // Dim 45: Surface vegetation/canopy proxy
+        float hydrology = uAlphaEarthData[8];       // Dim 8: Surface moisture/water body proxy
+        
+        vec2 q = vec2(fbm(uv + vec2(crustalDensity, hydrology)), fbm(uv + vec2(5.2, 1.3)));
+        vec2 r = vec2(fbm(uv + (4.0 - vegIndex)*q + vec2(1.7, 9.2) + 0.001*t), fbm(uv + 4.0*q + vec2(8.3, 2.8) + 0.001*t));
+        
+        float baseElevation = fbm(uv + 4.0*r);
+        
+        // Carve out lakes based on hydrology embedding
+        baseElevation -= smoothstep(0.4, 1.0, hydrology) * 0.15 * fbm(uv * 10.0);
+        
+        return clamp(baseElevation, 0.0, 1.0);
     }
 
     // Museum heightmap
@@ -102,14 +122,14 @@ export const mapFS = `
         if (uSkinMode < 0.99) {
             float grit = random(vUv * 500.0);
             
-            // 1. Elevation (Heightmap)
-            float elevation = warpedFbm(vUv * 4.0, time);
+            // 1. Elevation (Heightmap) using AlphaEarth
+            float elevation = alphaEarthTopography(vUv * 4.0, time);
             
             // 2. Fake Normals (Bump Mapping)
             // Calculate a normal vector from the height derivative
             vec2 e = vec2(0.005, 0.0);
-            float hX = warpedFbm((vUv + e.xy) * 4.0, time);
-            float hY = warpedFbm((vUv + e.yx) * 4.0, time);
+            float hX = alphaEarthTopography((vUv + e.xy) * 4.0, time);
+            float hY = alphaEarthTopography((vUv + e.yx) * 4.0, time);
             vec3 normal = normalize(vec3(elevation - hX, elevation - hY, 0.02));
             
             // 3. Lighting
@@ -142,7 +162,10 @@ export const mapFS = `
             
             // Highlands / Rock
             float highMask = step(0.65, elevation);
-            vec3 highColor = mix(vec3(0.45, 0.43, 0.40), vec3(0.65, 0.62, 0.60), (elevation - 0.65) * 2.8);
+            float ironProp = uAlphaEarthData[22]; // Dim 22: Ferric iron oxide index
+            vec3 rawRockColor = mix(vec3(0.45, 0.43, 0.40), vec3(0.65, 0.62, 0.60), (elevation - 0.65) * 2.8);
+            vec3 highColor = mix(rawRockColor, vec3(0.6, 0.35, 0.25), ironProp * 0.4); // Reddish tint if high iron
+
             
             terrainColor = waterColor * waterMask + 
                            coastColor * coastMask + 
@@ -163,9 +186,10 @@ export const mapFS = `
             float by = step(0.96, gl2.y) + step(gl2.y, 0.04);
             float isBorder = clamp(bx + by, 0.0, 1.0);
             
-            // Clusters: use low-freq FBM to group cities together
-            float cityCluster = fbm(vUv * 6.0);
-            float isBuildingMask = step(0.85, tileN) * step(0.65, cityCluster) * lowMask * uMapMode; 
+            // Clusters: use low-freq FBM to group cities together, modulated by AlphaEarth Urban Index
+            float urbanIndex = uAlphaEarthData[50]; // Dim 50: Anthropogenic structure density
+            float cityCluster = fbm(vUv * 6.0) + (urbanIndex * 0.3);
+            float isBuildingMask = step(0.85 - (urbanIndex * 0.2), tileN) * step(0.65, cityCluster) * lowMask * uMapMode; 
             
             vec3 buildingColor = mix(vec3(0.25, 0.28, 0.30), vec3(0.25, 0.28, 0.30), random(id + 10.0));
             buildingColor = mix(buildingColor, vec3(0.2, 0.22, 0.24), isBorder);

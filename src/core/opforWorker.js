@@ -112,20 +112,68 @@ class FlankBlueForce extends Node {
     }
 }
 
+class EvaluateAlphaEarthTerrainCost extends Node {
+    evaluate(track, tacticalState) {
+        // Logic: Calculate terrain traversal cost based on AlphaEarth embeddings
+        // Dim 12: Lithosphere density
+        // Dim 45: Surface vegetation
+        // Dim 8: Hydrology
+        if (!tacticalState.alphaEarthData || tacticalState.alphaEarthData.length < 64) {
+            return 'FAILURE'; 
+        }
+
+        const crustD = tacticalState.alphaEarthData[12];
+        const vegI = tacticalState.alphaEarthData[45];
+        const hydro = tacticalState.alphaEarthData[8];
+
+        // Basic collision check: Water bodies
+        // In the shader: baseElevation -= smoothstep(0.4, 1.0, hydro) * 0.15 * fbm(uv*10);
+        // If hydrology is high, we assume water/river blocking ground troops unless they are UUVs
+        
+        const isGroundUnit = track.subtypeCode < 10;
+        
+        // Pseudo-steering: Repel from "dense vegetation" centers (just a synthetic gradient)
+        if (vegI > 0.6 && isGroundUnit) {
+            // Apply a slight repulsive force randomly associated with high vegetation chunks
+            // We use the spatial hash coordinates to generate pseudo-deterministic terrain lumps
+            const cx = Math.floor(track.x / 5.0) * 5.0;
+            const cy = Math.floor(track.y / 5.0) * 5.0;
+            const lumpHash = Math.abs(Math.sin(cx * 12.9898 + cy * 78.233)) * vegI;
+            
+            if (lumpHash > 0.5) {
+                // Steer away from block
+                const rx = track.x - cx;
+                const ry = track.y - cy;
+                const d = Math.sqrt(rx*rx + ry*ry) || 1.0;
+                track.desiredVector.x += (rx/d) * 0.4;
+                track.desiredVector.y += (ry/d) * 0.4;
+            }
+        }
+
+        return 'SUCCESS';
+    }
+}
+
 // --- THE OPFOR BRAIN ---
 // Priority 1: Survive (Evade if under attack)
-// Priority 2: Flank Blue Force
+// Priority 2: Navigate AlphaEarth Terrain Costs
+// Priority 3: Flank Blue Force
 const opforBrain = new Selector([
     new Sequence([
         new IsUnderAttack(),
         new ExecuteEvasiveManeuver()
+    ]),
+    new Sequence([
+        new EvaluateAlphaEarthTerrainCost(),
+        new FlankBlueForce()
     ]),
     new FlankBlueForce()
 ]);
 
 const tacticalState = {
     hostiles: [],
-    friendlies: []
+    friendlies: [],
+    alphaEarthData: null
 };
 
 const EW_ZONES = [ { x: 0, y: 0, radius: 10.0 } ];
@@ -299,6 +347,10 @@ self.onmessage = function(e) {
     const rawData = new Float32Array(dataBuffer);
     const decoyActive = Boolean(payload.decoyActive);
     const decoyBurstCount = Number(payload.decoyBurstCount) || 0;
+    
+    if (payload.alphaEarthBuffer) {
+        tacticalState.alphaEarthData = new Float32Array(payload.alphaEarthBuffer);
+    }
     
     tacticalState.hostiles.length = 0;
     tacticalState.friendlies.length = 0;

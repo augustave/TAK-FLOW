@@ -258,11 +258,33 @@ export class TrackManager {
 
         const decoyState = store.get('decoySim') || {};
         this.workerPending = true;
-        this.opforWorker.postMessage({
+
+        // Fetch AlphaEarth payload
+        let aeBuffer = null;
+        if (window.opsLogInstance) {
+            const expCtx = window.opsLogInstance.exportContext;
+            if (expCtx) {
+                const mapEng = expCtx().mapEngine;
+                if (mapEng && mapEng.alphaEarthData) {
+                    aeBuffer = mapEng.alphaEarthData.buffer;
+                }
+            }
+        }
+
+        const msgPayload = {
             buffer: buffer.buffer,
             decoyActive: Boolean(decoyState.running),
             decoyBurstCount: Number(decoyState.burstCount) || 0
-        }, [buffer.buffer]);
+        };
+
+        const transferrables = [buffer.buffer];
+        if (aeBuffer) {
+            msgPayload.alphaEarthBuffer = aeBuffer;
+            // Since MapEngine holds `alphaEarthData` statefully, we don't transfer ownership to worker, just slice it.
+            msgPayload.alphaEarthBuffer = aeBuffer.slice(0);
+        }
+
+        this.opforWorker.postMessage(msgPayload, transferrables);
     }
 
     applyOpforIntents(intentsBuffer) {

@@ -27,13 +27,25 @@ export function setupMapEngine(container) {
     ];
     const samRadii = [12.0, 18.0, 8.0];
 
+    // AlphaEarth Simulated 64-D Embedding Tensor
+    // Initialized pseudo-randomly for terrain generation consistency
+    const alphaEarthData = new Float32Array(64);
+    for (let i = 0; i < 64; i++) {
+        alphaEarthData[i] = Math.random();
+    }
+    // High vegetation (Dim 45), Moderate iron (Dim 22), Low water bodies (Dim 8)
+    alphaEarthData[45] = 0.8;
+    alphaEarthData[22] = 0.6;
+    alphaEarthData[8]  = 0.2;
+
     const uniforms = {
         time: { value: 0 },
         uExplosions: { value: explosions },
         uSkinMode: { value: 0 },
         uMapMode: { value: 1.0 },
         uSAMPositions: { value: samPositions },
-        uSAMRadii: { value: samRadii }
+        uSAMRadii: { value: samRadii },
+        uAlphaEarthData: { value: alphaEarthData }
     };
 
     const mapMat = new THREE.ShaderMaterial({
@@ -91,5 +103,5 @@ export function setupMapEngine(container) {
     const filmPass = new THREE.FilmPass(0.8, 1.2, 1024, false);
     composer.addPass(filmPass);
 
-    return { scene, camera, renderer, composer, bloomPass, filmPass, mapMesh, overlayGroup, radarMesh, uniforms, explosions };
+    return { scene, camera, renderer, composer, bloomPass, filmPass, mapMesh, overlayGroup, radarMesh, uniforms, explosions, alphaEarthData };
 }

@@ -60,14 +60,21 @@ export class DOMController {
         this.provenanceFlashTimeoutId = null;
         this.vjepaWarningActive = false;
         this.vjepaWarningLogged = false;
-        this.vjepaHoverActive = false;
-        this.vjepaAnchor = null;
-
         // Make clearUndoWindow globally available for OpsLog clear
         window.clearUndoWindow = () => this.clearUndoWindow();
 
         this.initDOMListeners();
         this.updateTrackTable();
+        
+        // Simulating the loading of the AlphaEarth foundation model 64-D embedding tensor
+        setTimeout(() => {
+            this.opsLog.addEntry('SYSTEM', 'ALPHAEARTH', '64-D EMBEDDING TENSOR LOADED. RESOLUTION: 10M.', 0, 999);
+            const aeBadge = document.getElementById('alphaearth-badge');
+            if (aeBadge) {
+                aeBadge.textContent = 'SYNCED';
+                aeBadge.className = 'panel-badge badge-live';
+            }
+        }, 2000);
 
         setInterval(() => {
             const selectedId = store.get('selectedTrackId');
@@ -331,6 +338,9 @@ export class DOMController {
             this.clearDestinationButtonEl.disabled = true;
             this.destinationMode = false;
             store.set('reconMode', false);
+            store.set('pendingDesignation', null);
+            this.hideConfirmStrip();
+            this.clearUndoWindow();
             this.setDestinationButtonEl.classList.remove('active');
             this.setDestinationButtonEl.textContent = 'SET DEST';
             this.deactivateRecon(null);
@@ -444,7 +454,13 @@ export class DOMController {
         
         // Filter by Threat
         if (this.filterThreat !== 'ALL') {
-            tracks = tracks.filter(t => t.threat_level === this.filterThreat);
+            if (this.filterThreat === 'HIGH') {
+                tracks = tracks.filter(t => t.type === 'hostile');
+            } else if (this.filterThreat === 'MEDIUM') {
+                tracks = tracks.filter(t => t.type === 'unknown');
+            } else if (this.filterThreat === 'LOW') {
+                tracks = tracks.filter(t => t.type === 'friendly');
+            }
         }
         
         // Filter by Search (ID or Type)
@@ -461,6 +477,10 @@ export class DOMController {
             switch(this.sortKey) {
                 case 'id': valA = a.id; valB = b.id; break;
                 case 'type': valA = a.subtype; valB = b.subtype; break;
+                case 'brg':
+                    valA = (Math.atan2(a.x, a.y) * 180 / Math.PI + 360) % 360;
+                    valB = (Math.atan2(b.x, b.y) * 180 / Math.PI + 360) % 360;
+                    break;
                 case 'rng': 
                     valA = Math.sqrt(a.x*a.x + a.y*a.y); 
                     valB = Math.sqrt(b.x*b.x + b.y*b.y); 
