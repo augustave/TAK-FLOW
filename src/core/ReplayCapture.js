@@ -26,8 +26,8 @@ export class ReplayCapture {
     }
 
     start() {
-        window.opsLogInstance?.addEntry('MODE', 'SYSTEM', 'REPLAY CAPTURE ACTIVE', 0, 999);
         if (this._tickInterval) return;
+        window.opsLogInstance?.addEntry('MODE', 'SYSTEM', 'REPLAY CAPTURE ACTIVE', 0, 999);
         this._tickInterval = window.setInterval(() => this._tickCapture(), CAPTURE_INTERVAL_MS);
     }
 
@@ -42,7 +42,7 @@ export class ReplayCapture {
         return Date.now() - this.startTimestamp;
     }
 
-    _getOpsLogDelta() {
+    _getOpsLogDelta(consume = true) {
         const logs = store.get('opsLog') || [];
         const unseen = [];
         for (let i = logs.length - 1; i >= 0; i--) {
@@ -50,14 +50,18 @@ export class ReplayCapture {
             const key = `${entry.ts}|${entry.action}|${entry.target}|${entry.details}|${entry.severity}|${entry.timeToEvent}`;
             if (this._seenOpsLogKeys.has(key)) continue;
             unseen.unshift({ ...entry });
-            this._seenOpsLogKeys.add(key);
+            if (consume) this._seenOpsLogKeys.add(key);
         }
         return unseen;
     }
 
-    _buildSnapshot(triggerEvent = null) {
+    _buildSnapshot(triggerEvent = null, options = {}) {
+        const consumeOpsLogDelta = options.consumeOpsLogDelta !== false;
         const timestamp = this._getTimestamp();
         const trackState = cloneTrackState(this.trackManager.getReplayTrackState());
+        const upfState = this.trackManager.getUpfFocusSnapshot();
+        const pendingDesignation = store.get('pendingDesignation');
+        const undoDesignation = store.get('undoDesignation');
         return {
             version: SNAPSHOT_VERSION,
             timestamp,
@@ -73,22 +77,58 @@ export class ReplayCapture {
                 onset: this.domController?.vjepaGateOnsetMs ?? null
             },
             ufpState: {
-                primaryId: this.trackManager.upfFocusState?.primaryId || null,
+                primaryId: upfState.primaryId || null,
                 coneAngleDeg: 0,
-                candidates: Array.from(this.trackManager.upfFocusState?.candidateIds || [])
+                candidates: upfState.candidateIds || [],
+                active: Boolean(upfState.active),
+                coneX: safeNumber(upfState.coneX),
+                coneY: safeNumber(upfState.coneY),
+                radius: safeNumber(upfState.radius, 12),
+                cursorX: safeNumber(upfState.cursorX),
+                cursorY: safeNumber(upfState.cursorY),
+                primaryConfidence: safeNumber(upfState.primaryConfidence),
+                lastUpdatedMs: safeNumber(upfState.lastUpdatedMs)
             },
-            opsLogDelta: this._getOpsLogDelta(),
+            opsLogDelta: this._getOpsLogDelta(consumeOpsLogDelta),
             recommendedAction: {
                 active: Boolean(this.domController?.vjepaWarningActive),
                 type: this.domController?.vjepaWarningActive ? 'V-JEPA' : null,
                 counterfactualBound: Boolean(this.trackManager?.counterfactualScanState?.active)
+            },
+            counterfactualState: {
+                active: Boolean(this.trackManager?.counterfactualScanState?.active),
+                x: safeNumber(this.trackManager?.counterfactualScanState?.x),
+                y: safeNumber(this.trackManager?.counterfactualScanState?.y),
+                radius: safeNumber(this.trackManager?.counterfactualScanState?.radius)
+            },
+            uiState: {
+                selectedTrackId: store.get('selectedTrackId') || null,
+                reconMode: Boolean(store.get('reconMode')),
+                destinationMode: Boolean(this.domController?.destinationMode),
+                pendingDesignation: pendingDesignation ? { ...pendingDesignation } : null,
+                pendingDesignationStage: safeNumber(store.get('pendingDesignationStage')),
+                undoDesignation: undoDesignation
+                    ? {
+                        trackId: undoDesignation.trackId || null,
+                        details: undoDesignation.details || '',
+                        mgrs: undoDesignation.mgrs || null
+                    }
+                    : null,
+                confirmVisible: this.domController?.confirmStrip?.style.display === 'flex',
+                undoVisible: this.domController?.undoStrip?.style.display === 'flex',
+                vjepaHoverActive: Boolean(this.domController?.vjepaHoverActive)
             },
             designationQueue: this.trackManager.getDesignationQueueSnapshot(),
             triggerEvent
         };
     }
 
+    createSnapshot(triggerEvent = null, options = {}) {
+        return this._buildSnapshot(triggerEvent, options);
+    }
+
     _tickCapture(force = false) {
+        if (this.trackManager?.replayMode) return null;
         const now = performance.now();
         if (!force && now - this._lastCaptureAt < (CAPTURE_INTERVAL_MS - 5)) return;
         this._lastCaptureAt = now;
@@ -102,6 +142,7 @@ export class ReplayCapture {
     }
 
     captureEvent(eventType) {
+        if (this.trackManager?.replayMode) return null;
         const snapshot = this._buildSnapshot(eventType);
         this.eventSnapshots.push(snapshot);
         window.dispatchEvent(new CustomEvent('replay:capture-updated'));

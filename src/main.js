@@ -30,7 +30,6 @@ const replayCapture = new ReplayCapture(trackManager, domController);
 trackManager.replayCapture = replayCapture;
 replayCapture.start();
 const replayPlayer = new ReplayPlayer(trackManager, domController);
-window.setTimeout(() => replayPlayer.load(replayCapture), 400);
 
 opsLog.setExportContext(() => ({
     store,
@@ -62,7 +61,7 @@ function getTrackFromObject(object) {
 
 window.addEventListener('mousedown', e => {
     if(store.get('pendingDesignation')) return;
-    if(e.target.closest('#hud .panel') || e.target.closest('#skin-toggle') || e.target.closest('#confirm-strip') || e.target.closest('#undo-strip') || e.target.closest('.drawer-toggle')) return;
+    if(e.target.closest('#hud .panel') || e.target.closest('#skin-toggle') || e.target.closest('#confirm-strip') || e.target.closest('#undo-strip') || e.target.closest('#replay-transport-bar') || e.target.closest('.drawer-toggle')) return;
     hudController.closeDrawers();
     
     mClick.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -153,7 +152,7 @@ window.addEventListener('mousedown', e => {
 });
 
 window.addEventListener('mousemove', e => {
-    if(e.target.closest('#hud .panel') || e.target.closest('#skin-toggle') || e.target.closest('#confirm-strip') || e.target.closest('#undo-strip') || e.target.closest('.drawer-toggle')) {
+    if(e.target.closest('#hud .panel') || e.target.closest('#skin-toggle') || e.target.closest('#confirm-strip') || e.target.closest('#undo-strip') || e.target.closest('#replay-transport-bar') || e.target.closest('.drawer-toggle')) {
         trackManager.clearSpatialConeFocus();
         return;
     }

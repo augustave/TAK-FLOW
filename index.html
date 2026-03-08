@@ -30,8 +30,11 @@
         </select>
         <select id="replay-event-jump" class="sim-select"></select>
         <span id="replay-timestamp" class="replay-timestamp">00:00.000</span>
+        <button id="replay-import" class="hud-btn">IMPORT REPLAY</button>
         <button id="replay-export" class="hud-btn">EXPORT REPLAY</button>
+        <button id="replay-close" class="hud-btn">CLOSE REPLAY</button>
     </div>
+    <input id="replay-import-file" type="file" accept=".json,application/json" style="display: none;">
 </div>
 <div id="vignette"></div>
 <div id="scanlines"></div>
@@ -235,6 +238,7 @@
                     <button id="btn-contrast" class="hud-btn">CONTRAST: STD</button>
                     <button id="btn-motion" class="hud-btn">MOTION: FULL</button>
                     <button id="btn-map" class="hud-btn active">MAP: TOPO</button>
+                    <button id="btn-replay-open" class="hud-btn">REPLAY</button>
                 </div>
             </div>
         </div>

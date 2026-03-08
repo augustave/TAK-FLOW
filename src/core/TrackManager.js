@@ -92,6 +92,7 @@ export class TrackManager {
         this._upfColorB = new THREE.Color();
         this.replayCapture = null;
         this.replayMode = false;
+        this.replaySelectedTrackId = null;
 
         // Phase 13: OPFOR Web Worker
         this.initOpforWorker();
@@ -783,6 +784,7 @@ export class TrackManager {
         this.numericTrackIdMap = new Map();
         this.trackLossLogs = new Set();
         this.emconLogs = new Set();
+        this.clearReplayState();
         
         this.initTracks();
 
@@ -825,6 +827,14 @@ export class TrackManager {
 
     setReplayMode(active) {
         this.replayMode = Boolean(active);
+    }
+
+    clearReplayState() {
+        this.replaySelectedTrackId = null;
+    }
+
+    getRenderSelectedTrackId(selectedId) {
+        return this.replayMode ? this.replaySelectedTrackId : selectedId;
     }
 
     getDesignationQueueSnapshot() {
@@ -892,19 +902,38 @@ export class TrackManager {
         return trackState;
     }
 
-    restoreSnapshot(snapshot) {
+    _applySnapshot(snapshot, options = {}) {
         if (!snapshot) return;
-        this.setReplayMode(true);
+        const useSnapshotSelection = options.useSnapshotSelection !== false;
         this.swarmTelemetry = {
             ...this.swarmTelemetry,
             ...snapshot.orderParams,
             com: this.swarmTelemetry.com
         };
+        const ufpRadius = Number(snapshot.ufpState?.radius) || this.upfConfig.coneRadius;
         this.upfFocusState = {
             ...this.upfFocusState,
+            active: Boolean(snapshot.ufpState?.active),
+            coneX: snapshot.ufpState?.coneX || 0,
+            coneY: snapshot.ufpState?.coneY || 0,
+            radius: ufpRadius,
+            radiusSq: ufpRadius * ufpRadius,
+            cursorX: snapshot.ufpState?.cursorX || 0,
+            cursorY: snapshot.ufpState?.cursorY || 0,
             primaryId: snapshot.ufpState?.primaryId || null,
-            candidateIds: new Set(snapshot.ufpState?.candidates || [])
+            primaryConfidence: snapshot.ufpState?.primaryConfidence || 0,
+            candidateIds: new Set(snapshot.ufpState?.candidates || []),
+            lastUpdatedMs: snapshot.ufpState?.lastUpdatedMs || Date.now()
         };
+        this.upfTrackedIds = new Set(snapshot.ufpState?.candidates || []);
+        this.counterfactualScanState = {
+            ...this.counterfactualScanState,
+            active: Boolean(snapshot.counterfactualState?.active),
+            x: snapshot.counterfactualState?.x || 0,
+            y: snapshot.counterfactualState?.y || 0,
+            radius: snapshot.counterfactualState?.radius || this.counterfactualScanState.radius
+        };
+        this.replaySelectedTrackId = useSnapshotSelection ? (snapshot.uiState?.selectedTrackId || null) : null;
 
         const renderRows = [];
         const liveMap = new Map();
@@ -916,7 +945,8 @@ export class TrackManager {
                 speed: Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
                 radius: entry.radius || 0,
                 confidence: entry.confidence,
-                entityType: entry.entityType || 0
+                entityType: entry.entityType || 0,
+                rfProfile: entry.rfProfile || null
             });
 
             const track = this.trackData.find(item => item.id === entry.id);
@@ -951,6 +981,17 @@ export class TrackManager {
 
         this.liveTrackStateById = liveMap;
         this.latestRenderingBuffer = new Float32Array(renderRows);
+    }
+
+    restoreSnapshot(snapshot) {
+        if (!snapshot || !this.replayMode) return;
+        this._applySnapshot(snapshot, { useSnapshotSelection: true });
+    }
+
+    restoreLiveSnapshot(snapshot) {
+        if (!snapshot) return;
+        this._applySnapshot(snapshot, { useSnapshotSelection: false });
+        this.clearReplayState();
     }
 
     getTrackMeshes() {
@@ -1461,6 +1502,7 @@ export class TrackManager {
         if (this.lastTime === undefined) this.lastTime = t;
         const dt = Math.min(t - this.lastTime, 0.1);
         this.lastTime = t;
+        const renderSelectedId = this.getRenderSelectedTrackId(selectedId);
 
         if (this.emconMaterial) {
             this.emconMaterial.uniforms.uTime.value = t;
@@ -1499,10 +1541,15 @@ export class TrackManager {
                         px = tr.pos.x;
                         py = tr.pos.y;
                     } else {
-                        const drift = tr.t.spd > 0 ? 0.3 : 0.05;
-                        px = tr.baseX + Math.sin(t * 0.3 + tr.offset) * drift * 3;
-                        py = tr.baseY + Math.cos(t * 0.25 + tr.offset) * drift * 3;
-                        tr.pos.set(px, py); // Keep pos updated for potential interactions
+                        if (this.replayMode) {
+                            px = tr.pos.x;
+                            py = tr.pos.y;
+                        } else {
+                            const drift = tr.t.spd > 0 ? 0.3 : 0.05;
+                            px = tr.baseX + Math.sin(t * 0.3 + tr.offset) * drift * 3;
+                            py = tr.baseY + Math.cos(t * 0.25 + tr.offset) * drift * 3;
+                            tr.pos.set(px, py); // Keep pos updated for potential interactions
+                        }
                     }
                     
                     let timeAngle;
@@ -1515,7 +1562,7 @@ export class TrackManager {
                     dummy.position.set(px, py, 0.2);
                     dummy.rotation.set(0, 0, timeAngle);
                     
-                    const isSelected = tr.t.id === selectedId;
+                    const isSelected = tr.t.id === renderSelectedId;
                     const upfRole = this.getUpfTrackRole(tr.t.id);
                     let sc = isSelected ? 1.15 + Math.sin(t * 3 + tr.offset) * 0.12 : 1 + Math.sin(t * 2 + tr.offset) * 0.15;
                     if (upfRole === 1) sc *= 1.2 + (((Math.sin(t * 9.0) + 1) * 0.5) * 0.18);
@@ -1565,7 +1612,7 @@ export class TrackManager {
             } else {
                 for(let i = 0; i < inst.tracks.length; i++) {
                     const tr = inst.tracks[i];
-                    if (!tr.isSwarm) {
+                    if (!tr.isSwarm && !this.replayMode) {
                         const drift = tr.t.spd > 0 ? 0.3 : 0.05;
                         tr.pos.x = tr.baseX + Math.sin(t * 0.3 + tr.offset) * drift * 3;
                         tr.pos.y = tr.baseY + Math.cos(t * 0.25 + tr.offset) * drift * 3;
@@ -1625,7 +1672,7 @@ export class TrackManager {
 
                 liveTrackState.set(strId, { x, y, speed, radius, confidence: threat, entityType });
                 
-                const isSelected = strId === selectedId;
+                const isSelected = strId === renderSelectedId;
                 const upfRole = this.getUpfTrackRole(strId);
                 if (upfRole === 1) this.upfPrimaryWorldPos = { x, y };
 
@@ -1749,7 +1796,7 @@ export class TrackManager {
             }
         }
 
-        if (!selectedId || !selectedTrackPos) {
+        if (!renderSelectedId || !selectedTrackPos) {
             this.selectionGroup.visible = false;
             this.destMarker.visible = false;
             this.destLine.visible = false;
@@ -1757,7 +1804,7 @@ export class TrackManager {
             this.selectionGroup.visible = true;
             this.lockRing.visible = true;
             
-            const dest = this.trackDestinations[selectedId];
+            const dest = this.trackDestinations[renderSelectedId];
             if (dest) {
                 this.destMarker.position.set(dest.x, dest.y, 0.08);
                 this.destMarker.visible = true;

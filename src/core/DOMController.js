@@ -296,7 +296,13 @@ export class DOMController {
     }
 
     selectTrack(id) {
-        if(store.get('selectedTrackId') === id) return;
+        this.applySelectedTrackState(id, { logSelection: true });
+    }
+
+    applySelectedTrackState(id, options = {}) {
+        const logSelection = options.logSelection !== false;
+        const force = Boolean(options.force);
+        if (!force && store.get('selectedTrackId') === id) return;
         store.set('selectedTrackId', id);
         store.set('reconMode', false);
         this.deactivateRecon(id);
@@ -304,7 +310,9 @@ export class DOMController {
         const track = this.trackManager.getTrackById(id);
         if(track) {
             const prov = this.trackManager.getProvenance(id);
-            this.opsLog.addEntry('SELECT', id, `TYPE:${track.subtype} SRC:${prov.source}`);
+            if (logSelection) {
+                this.opsLog.addEntry('SELECT', id, `TYPE:${track.subtype} SRC:${prov.source}`);
+            }
             this.updateActiveTrackPanel(track);
         } else {
             this.updateActiveTrackPanel(null);
@@ -312,6 +320,68 @@ export class DOMController {
         
         this.trackManager.updateSelectionVisuals(id);
         this.updateTrackTable();
+    }
+
+    renderTelemetrySnapshot(orderParams = {}) {
+        const polarization = Number(orderParams.polarization || 0);
+        const milling = Number(orderParams.milling || 0);
+        const cohesion = Number(orderParams.cohesion || 0);
+        const activeCount = Number(orderParams.activeCount || 0);
+
+        if (this.domPol) this.domPol.textContent = polarization.toFixed(2);
+        if (this.domMill) this.domMill.textContent = milling.toFixed(2);
+        if (this.domCoh) this.domCoh.textContent = cohesion.toFixed(2);
+        if (this.barPol) this.barPol.style.width = `${polarization * 100}%`;
+        if (this.barMill) this.barMill.style.width = `${milling * 100}%`;
+        if (this.barCoh) this.barCoh.style.width = `${cohesion * 100}%`;
+
+        if (!this.kinematicsBadge) return;
+        if (activeCount === 0) {
+            this.kinematicsBadge.textContent = 'NO LOC';
+            this.kinematicsBadge.className = 'panel-badge badge-warning';
+            return;
+        }
+        if (milling > 0.6) {
+            this.kinematicsBadge.textContent = 'MILLING';
+            this.kinematicsBadge.className = 'panel-badge badge-critical';
+        } else if (polarization > 0.7) {
+            this.kinematicsBadge.textContent = 'ALIGNED';
+            this.kinematicsBadge.className = 'panel-badge badge-warning';
+        } else if (cohesion > 0.8) {
+            this.kinematicsBadge.textContent = 'CLUSTERED';
+            this.kinematicsBadge.className = 'panel-badge badge-nominal';
+        } else {
+            this.kinematicsBadge.textContent = 'DISORDERED';
+            this.kinematicsBadge.className = 'panel-badge';
+            this.kinematicsBadge.style.background = 'var(--panel-bg)';
+            this.kinematicsBadge.style.color = '#fff';
+        }
+    }
+
+    renderRecommendedActionState(isCritical, recommendedAction = {}) {
+        if (this.recommendedActionsPanelEl && this.recommendedActionsBadgeEl) {
+            this.recommendedActionsPanelEl.classList.toggle('critical', isCritical);
+            this.recommendedActionsBadgeEl.textContent = isCritical ? 'CRITICAL' : 'STANDBY';
+            this.recommendedActionsBadgeEl.className = isCritical
+                ? 'panel-badge badge-alert'
+                : 'panel-badge badge-nominal';
+        }
+
+        if (this.recDecoyCardEl) {
+            this.recDecoyCardEl.style.display = isCritical ? 'none' : 'block';
+        }
+        if (this.recVjepaCardEl) {
+            this.recVjepaCardEl.style.display = isCritical ? 'block' : 'none';
+            this.recVjepaCardEl.classList.toggle('flash', isCritical);
+        }
+        if (this.decoySimPanelEl) {
+            this.decoySimPanelEl.classList.toggle('superseded', isCritical);
+        }
+        if (this.recExecuteBtnEl) {
+            const enabled = Boolean(recommendedAction.active);
+            this.recExecuteBtnEl.disabled = !enabled;
+            this.recExecuteBtnEl.style.opacity = enabled ? '1' : '0.45';
+        }
     }
 
     deactivateRecon(trackId) {
@@ -794,56 +864,25 @@ export class DOMController {
             this.vjepaHoverActive = false;
         }
 
-        if (this.recommendedActionsPanelEl && this.recommendedActionsBadgeEl) {
-            this.recommendedActionsPanelEl.classList.toggle('critical', isCritical);
-            this.recommendedActionsBadgeEl.textContent = isCritical ? 'CRITICAL' : 'STANDBY';
-            this.recommendedActionsBadgeEl.className = isCritical
-                ? 'panel-badge badge-alert'
-                : 'panel-badge badge-nominal';
-        }
-
-        if (this.recDecoyCardEl) {
-            this.recDecoyCardEl.style.display = isCritical ? 'none' : 'block';
-        }
-        if (this.recVjepaCardEl) {
-            this.recVjepaCardEl.style.display = isCritical ? 'block' : 'none';
-            this.recVjepaCardEl.classList.toggle('flash', isCritical);
-        }
-        if (this.decoySimPanelEl) {
-            this.decoySimPanelEl.classList.toggle('superseded', isCritical);
-        }
-        if (this.recExecuteBtnEl) {
-            const canExecute = isCritical && Boolean(this.vjepaAnchor);
-            this.recExecuteBtnEl.disabled = !canExecute;
-            this.recExecuteBtnEl.style.opacity = canExecute ? '1' : '0.45';
-        }
+        this.renderRecommendedActionState(isCritical, {
+            active: isCritical,
+            type: isCritical ? 'V-JEPA' : null,
+            counterfactualBound: Boolean(this.trackManager?.counterfactualScanState?.active)
+        });
 
         this.syncVjepaCounterfactualOverlay();
     }
 
     restoreSnapshot(snapshot) {
         if (!snapshot) return;
-        const orderParams = snapshot.orderParams || {};
-        if (this.domPol) this.domPol.textContent = Number(orderParams.polarization || 0).toFixed(2);
-        if (this.domMill) this.domMill.textContent = Number(orderParams.milling || 0).toFixed(2);
-        if (this.domCoh) this.domCoh.textContent = Number(orderParams.cohesion || 0).toFixed(2);
-        if (this.barPol) this.barPol.style.width = `${(orderParams.polarization || 0) * 100}%`;
-        if (this.barMill) this.barMill.style.width = `${(orderParams.milling || 0) * 100}%`;
-        if (this.barCoh) this.barCoh.style.width = `${(orderParams.cohesion || 0) * 100}%`;
+        this.renderTelemetrySnapshot(snapshot.orderParams || {});
 
         this.vjepaWarningActive = Boolean(snapshot.vejpaGate?.active);
         this.vjepaGateOnsetMs = snapshot.vejpaGate?.onset ?? null;
         this.vjepaWarningLogged = this.vjepaWarningActive;
-        if (this.recommendedActionsPanelEl && this.recommendedActionsBadgeEl) {
-            this.recommendedActionsPanelEl.classList.toggle('critical', this.vjepaWarningActive);
-            this.recommendedActionsBadgeEl.textContent = this.vjepaWarningActive ? 'CRITICAL' : 'STANDBY';
-            this.recommendedActionsBadgeEl.className = this.vjepaWarningActive
-                ? 'panel-badge badge-alert'
-                : 'panel-badge badge-nominal';
-        }
-        if (this.recDecoyCardEl) this.recDecoyCardEl.style.display = this.vjepaWarningActive ? 'none' : 'block';
-        if (this.recVjepaCardEl) this.recVjepaCardEl.style.display = this.vjepaWarningActive ? 'block' : 'none';
-        if (this.recExecuteBtnEl) this.recExecuteBtnEl.disabled = !snapshot.recommendedAction?.active;
+        this.vjepaHoverActive = Boolean(snapshot.uiState?.vjepaHoverActive);
+        this.vjepaAnchor = this.vjepaWarningActive ? this.getVjepaAnchor(snapshot.orderParams || {}) : null;
+        this.renderRecommendedActionState(this.vjepaWarningActive, snapshot.recommendedAction || {});
         this.syncVjepaCounterfactualOverlay();
 
         if (this.opsLog?.feedEl) {
@@ -862,6 +901,57 @@ export class DOMController {
                 this.opsLog.feedEl.appendChild(entry);
             });
         }
+    }
+
+    restoreLiveState(snapshot) {
+        const uiState = snapshot?.uiState || {};
+        const selectedTrackId = uiState.selectedTrackId || null;
+        this.replayLogEntries = [];
+        this.vjepaWarningActive = Boolean(snapshot?.vejpaGate?.active);
+        this.vjepaGateOnsetMs = snapshot?.vejpaGate?.onset ?? null;
+        this.vjepaWarningLogged = this.vjepaWarningActive;
+        this.vjepaHoverActive = Boolean(uiState.vjepaHoverActive);
+        this.vjepaAnchor = this.vjepaWarningActive ? this.getVjepaAnchor(snapshot?.orderParams || {}) : null;
+        this.renderTelemetrySnapshot(snapshot?.orderParams || this.trackManager.getSwarmTelemetry());
+        this.renderRecommendedActionState(this.vjepaWarningActive, snapshot?.recommendedAction || {});
+
+        this.destinationMode = Boolean(uiState.destinationMode);
+
+        if (this.setDestinationButtonEl) {
+            this.setDestinationButtonEl.classList.toggle('active', this.destinationMode);
+            this.setDestinationButtonEl.textContent = this.destinationMode ? 'CLICK MAP...' : 'SET DEST';
+        }
+
+        if (selectedTrackId) {
+            this.applySelectedTrackState(selectedTrackId, { logSelection: false, force: true });
+        } else {
+            this.updateActiveTrackPanel(null);
+            this.updateTrackTable();
+        }
+
+        store.set('selectedTrackId', selectedTrackId);
+        store.set('reconMode', Boolean(uiState.reconMode));
+        store.set('pendingDesignation', uiState.pendingDesignation ? { ...uiState.pendingDesignation } : null);
+        store.set('pendingDesignationStage', Number(uiState.pendingDesignationStage) || 0);
+        store.set('undoDesignation', uiState.undoDesignation ? { ...uiState.undoDesignation } : null);
+
+        if (uiState.confirmVisible && uiState.pendingDesignation && this.confirmStrip) {
+            this.confirmStrip.style.display = 'flex';
+            this.confirmTarget.textContent = `${uiState.pendingDesignation.trackId} @ ${uiState.pendingDesignation.mgrs}`;
+            this.setDesignationStage(Number(uiState.pendingDesignationStage) || 1);
+        } else {
+            this.hideConfirmStrip();
+        }
+
+        if (uiState.undoVisible && uiState.undoDesignation && this.undoStrip) {
+            this.undoText.textContent = `DESIGNATED ${uiState.undoDesignation.trackId}`;
+            this.undoStrip.style.display = 'flex';
+        } else {
+            this.clearUndoWindow();
+        }
+
+        this.syncVjepaCounterfactualOverlay();
+        this.opsLog?.renderFeed();
     }
 
     update() {
