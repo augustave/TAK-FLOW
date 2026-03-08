@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { store } from './core/Store.js';
 import { setupMapEngine } from './core/MapEngine.js';
 import { TrackManager } from './core/TrackManager.js';
@@ -8,6 +9,8 @@ import { HUDController } from './core/HUDController.js';
 import { DOMController } from './core/DOMController.js';
 import { DrawController } from './core/DrawController.js';
 import { SplatController } from './core/SplatController.js';
+import { ReplayCapture } from './core/ReplayCapture.js';
+import { ReplayPlayer } from './core/ReplayPlayer.js';
 
 // Setup Map
 const container = document.getElementById('canvas-container');
@@ -23,6 +26,11 @@ const trackManager = new TrackManager(mapEngine.overlayGroup);
 const domController = new DOMController(trackManager, opsLog);
 const drawController = new DrawController(mapEngine.scene, mapEngine.overlayGroup);
 const splatController = new SplatController(mapEngine.scene, mapEngine.overlayGroup);
+const replayCapture = new ReplayCapture(trackManager, domController);
+trackManager.replayCapture = replayCapture;
+replayCapture.start();
+const replayPlayer = new ReplayPlayer(trackManager, domController);
+window.setTimeout(() => replayPlayer.load(replayCapture), 400);
 
 opsLog.setExportContext(() => ({
     store,
@@ -33,7 +41,9 @@ opsLog.setExportContext(() => ({
     hudController,
     domController,
     drawController,
-    splatController
+    splatController,
+    replayCapture,
+    replayPlayer
 }));
 
 // Logic: Interactions
@@ -117,7 +127,7 @@ window.addEventListener('mousedown', e => {
         if (!domController.canInitiateStrike(selectedTrackId)) {
             return;
         }
-        
+        trackManager.replayCapture?.captureEvent('DESIGNATION_INITIATE');
         store.set('pendingDesignation', { x: p.x, z: p.z, mgrs: mgrsString, trackId: selectedTrackId });
         domController.confirmStrip.style.display = 'flex';
         domController.confirmStrip.style.left = e.clientX + 'px';
@@ -197,6 +207,7 @@ window.addEventListener('keydown', e => {
         if(tag === 'select' && e.key !== 'Escape') return;
 
         if(e.key === 'Escape') {
+            trackManager.replayCapture?.captureEvent('DESIGNATION_CANCEL');
             store.set('pendingDesignation', null);
             domController.hideConfirmStrip();
             return;

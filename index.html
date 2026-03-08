@@ -13,6 +13,26 @@
 <div class="classification-banner bottom">TOP SECRET // SI // TK // NOFORN</div>
 
 <div id="canvas-container"></div>
+<div id="replay-transport-bar" style="display: none;">
+    <div class="replay-markers" id="replay-markers"></div>
+    <input id="replay-scrub" class="replay-scrub" type="range" min="0" max="0" step="1" list="replay-scrub-ticks" />
+    <datalist id="replay-scrub-ticks"></datalist>
+    <div class="replay-controls">
+        <button id="replay-step-back" class="hud-btn">STEP -</button>
+        <button id="replay-play-pause" class="hud-btn">PLAY</button>
+        <button id="replay-step-fwd" class="hud-btn">STEP +</button>
+        <select id="replay-speed" class="sim-select">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+        </select>
+        <select id="replay-event-jump" class="sim-select"></select>
+        <span id="replay-timestamp" class="replay-timestamp">00:00.000</span>
+        <button id="replay-export" class="hud-btn">EXPORT REPLAY</button>
+    </div>
+</div>
 <div id="vignette"></div>
 <div id="scanlines"></div>
 <button id="left-drawer-toggle" class="drawer-toggle">LEFT PANEL</button>
@@ -563,18 +583,7 @@
     </div>
 </div>
 
-<!-- THREE.JS -->
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/FilmPass.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FilmShader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
-<script src="./sim/profiles.js"></script>
+<script type="module" src="./sim/profiles.js"></script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

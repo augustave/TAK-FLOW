@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { trackData, sources, confidences, loadScenario } from '../data/mockData.js';
 import { store } from './Store.js';
 
@@ -89,6 +90,8 @@ export class TrackManager {
         this.upfPrimaryWorldPos = null;
         this._upfColorA = new THREE.Color();
         this._upfColorB = new THREE.Color();
+        this.replayCapture = null;
+        this.replayMode = false;
 
         // Phase 13: OPFOR Web Worker
         this.initOpforWorker();
@@ -97,7 +100,7 @@ export class TrackManager {
     }
 
     initOpforWorker() {
-        this.opforWorker = new Worker('src/core/opforWorker.js', { type: 'module' });
+        this.opforWorker = new Worker(new URL('./opforWorker.js', import.meta.url), { type: 'module' });
         this.workerPending = false;
         
         this.opforWorker.onmessage = (e) => {
@@ -189,7 +192,14 @@ export class TrackManager {
         Object.values(this.instances).forEach(inst => {
             const before = inst.tracks.length;
             inst.tracks = inst.tracks.filter(tr => tr.t.id !== trackId);
-            if (inst.tracks.length !== before) removed = true;
+            if (inst.tracks.length !== before) {
+                removed = true;
+                if (inst.mesh) {
+                    inst.mesh.count = Math.min(inst.mesh.count, inst.tracks.length);
+                    inst.mesh.instanceMatrix.needsUpdate = true;
+                    if (inst.mesh.instanceColor) inst.mesh.instanceColor.needsUpdate = true;
+                }
+            }
         });
 
         if (this.provenanceByTrackId[trackId]) delete this.provenanceByTrackId[trackId];
@@ -760,10 +770,6 @@ export class TrackManager {
         if (this.upfAttentionGroup) this.upfAttentionGroup.visible = false;
         if (this.upfGuideLine) this.upfGuideLine.visible = false;
         
-        if (window.store) {
-            window.store.set('selectedTrackId', null);
-            window.store.set('reconMode', false);
-        }
         if (this.opforWorker) {
             this.opforWorker.postMessage({ type: 'RESET_STATE' });
         }
@@ -815,6 +821,136 @@ export class TrackManager {
 
     getSwarmTelemetry() {
         return this.swarmTelemetry;
+    }
+
+    setReplayMode(active) {
+        this.replayMode = Boolean(active);
+    }
+
+    getDesignationQueueSnapshot() {
+        const queue = [];
+        const pendingDesignation = store.get('pendingDesignation');
+        const undoDesignation = store.get('undoDesignation');
+        if (pendingDesignation) queue.push({ type: 'pending', ...pendingDesignation });
+        if (undoDesignation) queue.push({ type: 'undo', ...undoDesignation });
+        return queue;
+    }
+
+    getReplayTrackState() {
+        const trackState = [];
+        const seen = new Set();
+
+        this.trackData.forEach((track) => {
+            const live = this.liveTrackStateById.get(track.id);
+            const confidence = live?.confidence ?? this.getTrackConfidenceScore(track.id);
+            const velocity = live ? { vx: 0, vy: live.speed || 0, vz: 0 } : { vx: 0, vy: track.spd || 0, vz: 0 };
+            trackState.push({
+                id: track.id,
+                x: live?.x ?? track.x,
+                y: live?.y ?? track.y,
+                z: live?.z ?? 0,
+                vx: velocity.vx,
+                vy: velocity.vy,
+                vz: velocity.vz,
+                confidence,
+                domain: track.type,
+                emconState: Boolean(live && (live.entityType === 2 || live.entityType === 4)),
+                isSigint: false,
+                rfProfile: null,
+                entityType: live?.entityType ?? 0,
+                radius: live?.radius ?? 0,
+                count: 1,
+                subtype: track.subtype
+            });
+            seen.add(track.id);
+        });
+
+        this.liveTrackStateById.forEach((live, id) => {
+            if (seen.has(id)) return;
+            const ghost = this.latestGhostMetadata.find(item => item.id === id);
+            const emcon = this.latestEmconMetadata.find(item => item.id === id || item.realId === id);
+            trackState.push({
+                id,
+                x: live.x,
+                y: live.y,
+                z: live.z || 0,
+                vx: 0,
+                vy: live.speed || 0,
+                vz: 0,
+                confidence: live.confidence,
+                domain: String(id).startsWith('CENTROID-') ? 'centroid' : 'synthetic',
+                emconState: Boolean(emcon || live.entityType === 2 || live.entityType === 4),
+                isSigint: Boolean(ghost || String(id).startsWith('GHOST-')),
+                rfProfile: ghost?.rfProfile || null,
+                entityType: live.entityType,
+                radius: live.radius || emcon?.radius || 0,
+                count: String(id).startsWith('CENTROID-') ? Math.max(1, Math.round((live.radius || 1) * 2)) : 1,
+                subtype: String(id).startsWith('GHOST-') ? 'SIGINT GHOST' : 'EMCON TRACK'
+            });
+        });
+
+        return trackState;
+    }
+
+    restoreSnapshot(snapshot) {
+        if (!snapshot) return;
+        this.setReplayMode(true);
+        this.swarmTelemetry = {
+            ...this.swarmTelemetry,
+            ...snapshot.orderParams,
+            com: this.swarmTelemetry.com
+        };
+        this.upfFocusState = {
+            ...this.upfFocusState,
+            primaryId: snapshot.ufpState?.primaryId || null,
+            candidateIds: new Set(snapshot.ufpState?.candidates || [])
+        };
+
+        const renderRows = [];
+        const liveMap = new Map();
+        snapshot.trackState.forEach((entry) => {
+            liveMap.set(entry.id, {
+                x: entry.x,
+                y: entry.y,
+                z: entry.z,
+                speed: Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
+                radius: entry.radius || 0,
+                confidence: entry.confidence,
+                entityType: entry.entityType || 0
+            });
+
+            const track = this.trackData.find(item => item.id === entry.id);
+            if (track) {
+                track.x = entry.x;
+                track.y = entry.y;
+                track.spd = Math.round(Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2));
+                const inst = this.instances[track.type];
+                const tr = inst?.tracks?.find(item => item.t.id === entry.id);
+                if (tr) {
+                    tr.pos.set(entry.x, entry.y);
+                    if (tr.vel) tr.vel.set(entry.vx || 0, entry.vy || 0);
+                }
+                return;
+            }
+
+            if (entry.entityType) {
+                renderRows.push(
+                    Number.parseInt(String(entry.id).replace(/\D/g, ''), 10) || 0,
+                    entry.entityType,
+                    entry.x,
+                    entry.y,
+                    entry.z || 0,
+                    Math.atan2(entry.vy || 0, entry.vx || 1),
+                    Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
+                    entry.radius || 0,
+                    entry.count || 1,
+                    entry.confidence || 0
+                );
+            }
+        });
+
+        this.liveTrackStateById = liveMap;
+        this.latestRenderingBuffer = new Float32Array(renderRows);
     }
 
     getTrackMeshes() {
@@ -950,6 +1086,7 @@ export class TrackManager {
         });
 
         const primary = candidates[0];
+        const previousPrimaryId = this.upfFocusState.primaryId;
         this.upfTrackedIds = new Set(candidates.map(c => c.id));
         this.upfFocusState = {
             active: true,
@@ -964,6 +1101,10 @@ export class TrackManager {
             candidateIds: this.upfTrackedIds,
             lastUpdatedMs: Date.now()
         };
+
+        if (primary.id && primary.id !== previousPrimaryId) {
+            this.replayCapture?.captureEvent('UPF_PRIMARY_RESOLVED');
+        }
 
         return {
             primaryId: primary.id,
@@ -1330,7 +1471,7 @@ export class TrackManager {
         }
         this.updateCounterfactualScanOverlay(t, skinVal);
 
-        if (dt > 0 && effectiveMotion > 0) {
+        if (!this.replayMode && dt > 0 && effectiveMotion > 0) {
             this.updateSwarmBoids(dt * effectiveMotion);
             this.sendStateToWorker();
         }
@@ -1348,6 +1489,7 @@ export class TrackManager {
             inst.mesh.material.opacity = baseTypeOpacity * (1 - skinVal);
             
             if (type !== 'hostile') {
+                inst.mesh.count = inst.tracks.length;
                 const color = new THREE.Color();
                 for(let i = 0; i < inst.tracks.length; i++) {
                     const tr = inst.tracks[i];
@@ -1380,7 +1522,7 @@ export class TrackManager {
                     if (upfRole === 2) sc *= 0.85;
                     dummy.scale.setScalar(sc);
                     
-                    if (effectiveMotion > 0) {
+                    if (!this.replayMode && effectiveMotion > 0) {
                         tr.t.time_to_event_seconds = Math.max(0, tr.t.time_to_event_seconds - dt * effectiveMotion);
                     }
                     

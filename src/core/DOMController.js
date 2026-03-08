@@ -60,6 +60,8 @@ export class DOMController {
         this.provenanceFlashTimeoutId = null;
         this.vjepaWarningActive = false;
         this.vjepaWarningLogged = false;
+        this.vjepaGateOnsetMs = null;
+        this.replayLogEntries = [];
         // Make clearUndoWindow globally available for OpsLog clear
         window.clearUndoWindow = () => this.clearUndoWindow();
 
@@ -145,7 +147,9 @@ export class DOMController {
         if (btnScenarioLoad) {
             btnScenarioLoad.addEventListener('click', () => {
                 const profile = document.getElementById('scenario-profile-select').value;
+                this.resetScenarioUiState();
                 this.trackManager.resetScenario(profile);
+                this.trackManager.replayCapture?.start();
                 this.opsLog.addEntry('MODE', 'INSTRUCTOR', `FORCED SCENARIO PROFILE: [${profile.toUpperCase()}]`);
                 this.updateTrackTable();
             });
@@ -154,7 +158,9 @@ export class DOMController {
         const btnScenarioClear = document.getElementById('btn-scenario-clear');
         if (btnScenarioClear) {
             btnScenarioClear.addEventListener('click', () => {
+                this.resetScenarioUiState();
                 this.trackManager.resetScenario('clear');
+                this.trackManager.replayCapture?.start();
                 this.opsLog.addEntry('MODE', 'SYSTEM', 'SCENARIO CLEARED (OPERATOR STANDBY)');
                 this.updateTrackTable();
             });
@@ -252,6 +258,7 @@ export class DOMController {
         });
 
         this.cancelButton?.addEventListener('click', () => {
+            this.trackManager.replayCapture?.captureEvent('DESIGNATION_CANCEL');
             store.set('pendingDesignation', null);
             this.hideConfirmStrip();
         });
@@ -325,6 +332,24 @@ export class DOMController {
         if (this.trackManager) {
             this.trackManager.hideReconSplat();
         }
+    }
+
+    resetScenarioUiState() {
+        this.destinationMode = false;
+        store.set('selectedTrackId', null);
+        store.set('reconMode', false);
+        store.set('pendingDesignation', null);
+        store.set('pendingDesignationStage', 0);
+        store.set('undoDesignation', null);
+
+        this.hideConfirmStrip();
+        this.clearUndoWindow();
+        this.setDestinationButtonEl?.classList.remove('active');
+        if (this.setDestinationButtonEl) this.setDestinationButtonEl.textContent = 'SET DEST';
+        this.deactivateRecon(null);
+        this.trackManager.hideCounterfactualScanZone();
+        this.trackManager.clearSpatialConeFocus();
+        this.updateActiveTrackPanel(null);
     }
 
     updateActiveTrackPanel(track) {
@@ -454,13 +479,7 @@ export class DOMController {
         
         // Filter by Threat
         if (this.filterThreat !== 'ALL') {
-            if (this.filterThreat === 'HIGH') {
-                tracks = tracks.filter(t => t.type === 'hostile');
-            } else if (this.filterThreat === 'MEDIUM') {
-                tracks = tracks.filter(t => t.type === 'unknown');
-            } else if (this.filterThreat === 'LOW') {
-                tracks = tracks.filter(t => t.type === 'friendly');
-            }
+            tracks = tracks.filter(t => t.threat_level === this.filterThreat);
         }
         
         // Filter by Search (ID or Type)
@@ -654,6 +673,9 @@ export class DOMController {
     commitDesignation() {
         const pending = store.get('pendingDesignation');
         if(!pending) return false;
+        const confidence = this.trackManager.getTrackConfidenceScore(pending.trackId);
+        const isOverride = confidence < 0.6 && Boolean(store.get('reconMode'));
+        this.trackManager.replayCapture?.captureEvent(isOverride ? 'DESIGNATION_OVERRIDE' : 'DESIGNATION_CONFIRM');
         if (!this.canInitiateStrike(pending.trackId)) return false;
         
         const reason = this.reasonSelect.style.display !== 'none' ? this.reasonSelect.value : 'N/A';
@@ -739,15 +761,23 @@ export class DOMController {
             1,
             120
         );
+        this.trackManager.replayCapture?.captureEvent('3DGS_MACRO_EXECUTED');
     }
 
     updateRecommendedActions(telemetry) {
+        const isReplay = Boolean(this.trackManager?.replayMode);
         const isCritical = this.isVjepaThreatAnxietyCondition(telemetry);
+        const wasCritical = this.vjepaWarningActive;
         this.vjepaWarningActive = isCritical;
         this.vjepaAnchor = isCritical ? this.getVjepaAnchor(telemetry) : null;
 
         if (isCritical) {
-            if (!this.vjepaWarningLogged) {
+            if (!wasCritical && !isReplay) {
+                this.vjepaGateOnsetMs = Date.now() - (this.trackManager.replayCapture?.startTimestamp || Date.now());
+                this.trackManager.replayCapture?.captureEvent('VEJPA_ONSET');
+                this.trackManager.replayCapture?.captureEvent('RECOMMENDED_ACTION_SUPERSESSION');
+            }
+            if (!this.vjepaWarningLogged && !isReplay) {
                 this.opsLog.addEntry(
                     'WARNING',
                     'V-JEPA',
@@ -758,6 +788,8 @@ export class DOMController {
                 this.vjepaWarningLogged = true;
             }
         } else {
+            if (wasCritical && !isReplay) this.trackManager.replayCapture?.captureEvent('VEJPA_CLEAR');
+            this.vjepaGateOnsetMs = null;
             this.vjepaWarningLogged = false;
             this.vjepaHoverActive = false;
         }
@@ -789,7 +821,51 @@ export class DOMController {
         this.syncVjepaCounterfactualOverlay();
     }
 
+    restoreSnapshot(snapshot) {
+        if (!snapshot) return;
+        const orderParams = snapshot.orderParams || {};
+        if (this.domPol) this.domPol.textContent = Number(orderParams.polarization || 0).toFixed(2);
+        if (this.domMill) this.domMill.textContent = Number(orderParams.milling || 0).toFixed(2);
+        if (this.domCoh) this.domCoh.textContent = Number(orderParams.cohesion || 0).toFixed(2);
+        if (this.barPol) this.barPol.style.width = `${(orderParams.polarization || 0) * 100}%`;
+        if (this.barMill) this.barMill.style.width = `${(orderParams.milling || 0) * 100}%`;
+        if (this.barCoh) this.barCoh.style.width = `${(orderParams.cohesion || 0) * 100}%`;
+
+        this.vjepaWarningActive = Boolean(snapshot.vejpaGate?.active);
+        this.vjepaGateOnsetMs = snapshot.vejpaGate?.onset ?? null;
+        this.vjepaWarningLogged = this.vjepaWarningActive;
+        if (this.recommendedActionsPanelEl && this.recommendedActionsBadgeEl) {
+            this.recommendedActionsPanelEl.classList.toggle('critical', this.vjepaWarningActive);
+            this.recommendedActionsBadgeEl.textContent = this.vjepaWarningActive ? 'CRITICAL' : 'STANDBY';
+            this.recommendedActionsBadgeEl.className = this.vjepaWarningActive
+                ? 'panel-badge badge-alert'
+                : 'panel-badge badge-nominal';
+        }
+        if (this.recDecoyCardEl) this.recDecoyCardEl.style.display = this.vjepaWarningActive ? 'none' : 'block';
+        if (this.recVjepaCardEl) this.recVjepaCardEl.style.display = this.vjepaWarningActive ? 'block' : 'none';
+        if (this.recExecuteBtnEl) this.recExecuteBtnEl.disabled = !snapshot.recommendedAction?.active;
+        this.syncVjepaCounterfactualOverlay();
+
+        if (this.opsLog?.feedEl) {
+            this.opsLog.feedEl.replaceChildren();
+            const entries = this.replayLogEntries || [];
+            entries.forEach((log) => {
+                const entry = document.createElement('div');
+                entry.className = 'sigint-entry';
+                let colorClass = 'info';
+                if (log.severity === 1) colorClass = 'warn';
+                if (log.severity === 2) colorClass = 'crit sigint-flash';
+                if (log.action === 'DESIGNATE') colorClass += ' crit';
+                this.opsLog.appendSpan(entry, 'sigint-time', log.ts);
+                this.opsLog.appendSpan(entry, `sigint-tag ${colorClass}`, log.action);
+                this.opsLog.appendSpan(entry, 'sigint-text', `[${log.target}] ${log.details}`);
+                this.opsLog.feedEl.appendChild(entry);
+            });
+        }
+    }
+
     update() {
+        if (this.trackManager?.replayMode) return;
         if (!this.trackManager || !this.domPol) return;
         
         const telemetry = this.trackManager.getSwarmTelemetry();

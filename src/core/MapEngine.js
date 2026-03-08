@@ -1,3 +1,8 @@
+import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { FilmPass } from 'three/examples/jsm/postprocessing/FilmPass.js';
 import { mapVS, mapFS } from '../shaders.js';
 
 export function setupMapEngine(container) {
@@ -93,14 +98,14 @@ export function setupMapEngine(container) {
     });
 
     // POST-PROCESSING Pipeline
-    const renderScene = new THREE.RenderPass(scene, camera);
-    const composer = new THREE.EffectComposer(renderer);
+    const renderScene = new RenderPass(scene, camera);
+    const composer = new EffectComposer(renderer);
     composer.addPass(renderScene);
 
-    const bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.4, 0.85);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.4, 0.85);
     composer.addPass(bloomPass);
 
-    const filmPass = new THREE.FilmPass(0.8, 1.2, 1024, false);
+    const filmPass = new FilmPass(0.8, 1.2, 1024, false);
     composer.addPass(filmPass);
 
     return { scene, camera, renderer, composer, bloomPass, filmPass, mapMesh, overlayGroup, radarMesh, uniforms, explosions, alphaEarthData };

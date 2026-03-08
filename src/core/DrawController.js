@@ -1,4 +1,6 @@
 
+import * as THREE from 'three';
+
 export class DrawController {
     constructor(scene, overlayGroup) {
         this.scene = scene;

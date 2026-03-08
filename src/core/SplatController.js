@@ -1,5 +1,7 @@
 import { store } from './Store.js';
 
+import * as THREE from 'three';
+
 export class SplatController {
     constructor(scene, overlayGroup) {
         this.scene = scene;

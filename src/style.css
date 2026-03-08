@@ -560,6 +560,59 @@
             border-color: rgba(255, 136, 0, 0.25);
         }
 
+        #replay-transport-bar {
+            position: absolute;
+            left: 50%;
+            bottom: 10px;
+            transform: translateX(-50%);
+            width: min(1080px, calc(100vw - 40px));
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px 12px;
+            background: rgba(9, 12, 16, 0.92);
+            border: 1px solid var(--panel-border);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            z-index: 35;
+        }
+
+        .replay-scrub {
+            width: 100%;
+            accent-color: var(--amber-alert);
+        }
+
+        .replay-markers {
+            position: relative;
+            height: 6px;
+            width: 100%;
+        }
+
+        .replay-marker {
+            position: absolute;
+            top: 0;
+            width: 2px;
+            height: 6px;
+            background: rgba(255, 194, 102, 0.8);
+        }
+
+        .replay-marker.marker-designation {
+            background: rgba(255, 51, 51, 0.9);
+        }
+
+        .replay-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .replay-timestamp {
+            margin-left: auto;
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: var(--amber-alert);
+        }
+
         /* ALERT STATE */
         .alert-state {
             display: flex;

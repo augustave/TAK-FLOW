@@ -1,16 +1,16 @@
-# TAK-H: Tactical Mosaic C2 Theater Simulator
+# TAK-FLOW: Tactical Mosaic C2 Theater Simulator
 
 ## Overview
-TAK-H is a high-fidelity, theater-level Command and Control (C2) visualization prototype. Designed with a brutalist, typography-driven aesthetic, the simulator explores "Decision Intelligence" workflows—focusing on how an operator manages high-density, multi-domain tracks (1,500+ entities) with varying levels of trust, provenance, and predictive threat analytics.
+TAK-FLOW is a high-fidelity, theater-level Command and Control (C2) visualization prototype. Designed with a brutalist, typography-driven aesthetic, the simulator explores "Decision Intelligence" workflows—focusing on how an operator manages high-density, multi-domain tracks (1,500+ entities) with varying levels of trust, provenance, and predictive threat analytics.
 
 The prototype simulates a degraded electronic warfare environment where tracks are probabilistic, and the system actively highlights critical, time-sensitive events while suppressing generic intelligence noise. The current build includes EMCON confidence-driven alpha decay, automatic lost-track culling, and zero-trust SIGINT ghost tracks.
 
 ## Tech Stack
-The project is built emphasizing maximum runtime execution speed and minimal dependencies, utilizing a vanilla web architecture:
+The project is built emphasizing maximum runtime execution speed and minimal dependencies, utilizing a lightweight Vite + vanilla web architecture:
 - **Core Visuals**: `Three.js` (WebGL rendering, InstancedMeshes for 60fps tracking of thousands of entities).
-- **Architecture**: Vanilla ES6 JavaScript, structured into modular classes (`TrackManager`, `DOMController`, `MapEngine`, `OpsLog`).
+- **Architecture**: Vanilla ES modules, structured into modular classes (`TrackManager`, `DOMController`, `MapEngine`, `OpsLog`).
 - **Styling**: Vanilla CSS, utilizing native CSS variables, flexbox layouts, and custom animations. No external UI frameworks (e.g., React, Tailwind) are used.
-- **Development Environment**: Standard local HTTP server; no complex build steps or transpilation pipelines required.
+- **Development Environment**: `Vite` for local development/build, with static hosting of built assets for deployment.
 
   
 <img width="1724" height="958" alt="Screenshot 2026-02-25 at 9 25 35 PM" src="https://github.com/user-attachments/assets/00f86624-a3b9-40ec-b9f3-766baabfaad0" />
@@ -63,8 +63,13 @@ The project is built emphasizing maximum runtime execution speed and minimal dep
 
 ## Running Locally
 1. Clone the repository.
-2. Serve the root directory using any local web server (e.g., `python3 -m http.server 8080` or `npx serve`).
-3. Navigate to `http://localhost:8080` (or `http://localhost:5500` if using Live Server) in any modern WebGL-compatible browser.
+2. Install dependencies with `npm install`.
+3. Start the development server with `npm run dev`.
+4. Open the local Vite URL shown in the terminal in a modern WebGL-compatible browser.
+
+## Production Build
+1. Run `npm run build`.
+2. Serve the generated `dist/` directory with any static web server.
 
 ## Next Steps
 - Add deterministic replay capture for V-JEPA advisory onset/clear transitions and macro execution timing.
