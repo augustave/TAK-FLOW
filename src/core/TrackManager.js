@@ -357,7 +357,13 @@ export class TrackManager {
             
             // Dim unknown tracks significantly so they are less dense/distracting on the terrain
             const baseOpacity = type === 'unknown' ? 0.25 : 0.82;
-            const mat = new THREE.MeshBasicMaterial({ color: this.typeColors[type], transparent: true, opacity: baseOpacity });
+            const mat = new THREE.MeshBasicMaterial({
+                color: this.typeColors[type],
+                transparent: true,
+                opacity: baseOpacity,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
             inst.mesh = new THREE.InstancedMesh(this.geometries[type], mat, count);
             inst.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
             inst.mesh.userData = { isTrackInstancedMesh: true, type: type };
@@ -446,7 +452,14 @@ export class TrackManager {
             s.lineTo(0.1, 0.2);
             return s; 
         })());
-        const uuvMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.9, vertexColors: true });
+        const uuvMat = new THREE.MeshBasicMaterial({
+            color: 0x00ffff,
+            transparent: true,
+            opacity: 0.9,
+            vertexColors: true,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
         this.uuvMesh = new THREE.InstancedMesh(uuvGeo, uuvMat, 500);
         this.uuvMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.uuvMesh.count = 0;
