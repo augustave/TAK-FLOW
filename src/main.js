@@ -392,8 +392,12 @@ function animate(ts) {
 
     // Post-processing overrides based on skin
     mapEngine.bloomPass.strength = 1.5 * (1 - skinVal);
-    mapEngine.filmPass.uniforms.nIntensity.value = 1.2 * skinVal;
-    mapEngine.filmPass.uniforms.sIntensity.value = 1.8 * skinVal;
+    if (mapEngine.filmPass?.uniforms?.intensity) {
+        mapEngine.filmPass.uniforms.intensity.value = 0.15 + (skinVal * 0.85);
+    }
+    if (mapEngine.filmPass?.uniforms?.grayscale) {
+        mapEngine.filmPass.uniforms.grayscale.value = skinVal > 0.92;
+    }
 
     mapEngine.composer.render();
 }

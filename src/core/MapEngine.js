@@ -105,7 +105,7 @@ export function setupMapEngine(container) {
     const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.4, 0.85);
     composer.addPass(bloomPass);
 
-    const filmPass = new FilmPass(0.8, 1.2, 1024, false);
+    const filmPass = new FilmPass(0.35, false);
     composer.addPass(filmPass);
 
     return { scene, camera, renderer, composer, bloomPass, filmPass, mapMesh, overlayGroup, radarMesh, uniforms, explosions, alphaEarthData };
