@@ -1,6 +1,6 @@
-# TAK-H.html Architecture Report
+# TAK-FLOW.html Architecture Report
 
-Here is a detailed, component-level breakdown of the `TAK-H.html` codebase. The architecture represents a highly interactive, single-file C2 (Command and Control) prototype combining a complex DOM-based HUD with a procedural WebGL environment.
+Here is a detailed, component-level breakdown of the `TAK-FLOW.html` codebase. The architecture represents a highly interactive, single-file C2 (Command and Control) prototype combining a complex DOM-based HUD with a procedural WebGL environment.
 
 ### 1. **CSS and Styling Engine (Lines 1-788)**
 *   **CSS Variables (Tokens)**: Foundational colors representing tactical environments (e.g., `--blue-force`, `--amber-alert`) and specific opacities are declared in `:root`.
