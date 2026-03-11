@@ -127,6 +127,20 @@ export class ReplayCapture {
         return this._buildSnapshot(triggerEvent, options);
     }
 
+    getExportFilename() {
+        return `replay.tak-h.${this.sessionId}.${this.startTimestamp}.json`;
+    }
+
+    serializeSession() {
+        return structuredClone({
+            version: SNAPSHOT_VERSION,
+            sessionId: this.sessionId,
+            startTimestamp: this.startTimestamp,
+            ringBuffer: this.ringBuffer,
+            eventSnapshots: this.eventSnapshots
+        });
+    }
+
     _tickCapture(force = false) {
         if (this.trackManager?.replayMode) return null;
         const now = performance.now();
@@ -150,19 +164,13 @@ export class ReplayCapture {
     }
 
     exportSession() {
-        const payload = structuredClone({
-            version: SNAPSHOT_VERSION,
-            sessionId: this.sessionId,
-            startTimestamp: this.startTimestamp,
-            ringBuffer: this.ringBuffer,
-            eventSnapshots: this.eventSnapshots
-        });
+        const payload = this.serializeSession();
         const json = JSON.stringify(payload, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `replay.tak-h.${this.sessionId}.${this.startTimestamp}.json`;
+        anchor.download = this.getExportFilename();
         anchor.click();
         URL.revokeObjectURL(url);
         return json;

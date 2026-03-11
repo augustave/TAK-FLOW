@@ -10,12 +10,15 @@
     "check:worker": "node --check src/core/opforWorker.js",
     "check:bundle": "npx esbuild src/main.js --bundle --format=esm --outfile=/tmp/tak-smoke.js",
     "check": "npm run check:worker && npm run check:bundle",
-    "test": "npm run check"
+    "test": "npm run check",
+    "smoke": "playwright test",
+    "ci:verify": "npm run build && npm test && npm run smoke"
   },
   "dependencies": {
     "three": "^0.181.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.54.2",
     "vite": "^7.1.7"
   },
   "keywords": [],

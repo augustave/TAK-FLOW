@@ -5,7 +5,66 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { FilmPass } from 'three/examples/jsm/postprocessing/FilmPass.js';
 import { mapVS, mapFS } from '../shaders.js';
 
-export function setupMapEngine(container) {
+function createFallbackMapEngine(container, uniforms, alphaEarthData) {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 45, 35);
+    camera.lookAt(0, 0, 0);
+
+    const fallbackCanvas = document.createElement('canvas');
+    fallbackCanvas.width = window.innerWidth;
+    fallbackCanvas.height = window.innerHeight;
+    fallbackCanvas.setAttribute('data-renderer-mode', 'fallback');
+    container.appendChild(fallbackCanvas);
+
+    const renderer = {
+        domElement: fallbackCanvas,
+        setSize(width, height) {
+            fallbackCanvas.width = width;
+            fallbackCanvas.height = height;
+        },
+        getPixelRatio() {
+            return 1;
+        }
+    };
+
+    const mapGeo = new THREE.PlaneGeometry(80, 80, 2, 2);
+    const mapMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
+    const mapMesh = new THREE.Mesh(mapGeo, mapMat);
+    mapMesh.rotation.x = -Math.PI / 2;
+    scene.add(mapMesh);
+
+    const overlayGroup = new THREE.Group();
+    overlayGroup.rotation.x = -Math.PI / 2;
+    overlayGroup.position.y = 0.15;
+    scene.add(overlayGroup);
+
+    const radarMesh = new THREE.Object3D();
+    overlayGroup.add(radarMesh);
+
+    const explosions = [];
+    for (let i = 0; i < 8; i++) explosions.push(new THREE.Vector3(0, 0, 0));
+
+    return {
+        scene,
+        camera,
+        renderer,
+        composer: {
+            render() {},
+            setSize() {}
+        },
+        bloomPass: { strength: 0 },
+        filmPass: { uniforms: { intensity: { value: 0 }, grayscale: { value: false } } },
+        mapMesh,
+        overlayGroup,
+        radarMesh,
+        uniforms,
+        explosions,
+        alphaEarthData
+    };
+}
+
+export function setupMapEngine(container, options = {}) {
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x030608, 0.012);
 
@@ -13,16 +72,7 @@ export function setupMapEngine(container) {
     camera.position.set(0, 45, 35);
     camera.lookAt(0, 0, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.8;
-    container.appendChild(renderer.domElement);
-
-    // Explosions (8 slots)
-    const explosions = [];
-    for(let i = 0; i < 8; i++) explosions.push(new THREE.Vector3(0,0,0));
+    let renderer;
 
     // SAM positions
     const samPositions = [
@@ -45,13 +95,31 @@ export function setupMapEngine(container) {
 
     const uniforms = {
         time: { value: 0 },
-        uExplosions: { value: explosions },
+        uExplosions: { value: [] },
         uSkinMode: { value: 0 },
         uMapMode: { value: 1.0 },
         uSAMPositions: { value: samPositions },
         uSAMRadii: { value: samRadii },
         uAlphaEarthData: { value: alphaEarthData }
     };
+
+    // Explosions (8 slots)
+    const explosions = [];
+    for(let i = 0; i < 8; i++) explosions.push(new THREE.Vector3(0,0,0));
+    uniforms.uExplosions.value = explosions;
+
+    try {
+        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.8;
+        container.appendChild(renderer.domElement);
+    } catch (error) {
+        if (!options.allowRendererFallback) throw error;
+        console.warn('MapEngine falling back to non-WebGL mode:', error?.message || error);
+        return createFallbackMapEngine(container, uniforms, alphaEarthData);
+    }
 
     const mapMat = new THREE.ShaderMaterial({
         vertexShader: mapVS,

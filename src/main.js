@@ -12,9 +12,11 @@ import { SplatController } from './core/SplatController.js';
 import { ReplayCapture } from './core/ReplayCapture.js';
 import { ReplayPlayer } from './core/ReplayPlayer.js';
 
+const isE2EMode = new URLSearchParams(window.location.search).has('e2e');
+
 // Setup Map
 const container = document.getElementById('canvas-container');
-const mapEngine = setupMapEngine(container);
+const mapEngine = setupMapEngine(container, { allowRendererFallback: isE2EMode });
 
 // Setup Controllers & Systems
 const opsLog = new OpsLog();
@@ -44,6 +46,136 @@ opsLog.setExportContext(() => ({
     replayCapture,
     replayPlayer
 }));
+
+if (isE2EMode) {
+    const stageDesignation = (trackId, mgrs = '38TLN 48250 17530') => {
+        const track = trackManager.getTrackById(trackId);
+        if (!track) {
+            return { ok: false, reason: 'track-not-found' };
+        }
+        if (!domController.canInitiateStrike(trackId)) {
+            return { ok: false, reason: 'strike-blocked' };
+        }
+
+        const pendingDesignation = { x: track.x, z: -track.y, mgrs, trackId };
+        store.set('pendingDesignation', pendingDesignation);
+        domController.confirmStrip.style.display = 'flex';
+        domController.confirmTarget.textContent = `${trackId} @ ${mgrs}`;
+
+        const prov = trackManager.getProvenance(trackId);
+        if (prov && prov.confidence === 'LOW') {
+            domController.reasonSelect.style.display = 'block';
+            domController.reasonSelect.value = 'VISUAL_CORROBORATION';
+        } else {
+            domController.reasonSelect.style.display = 'none';
+        }
+
+        domController.setDesignationStage(1);
+        trackManager.replayCapture?.captureEvent('DESIGNATION_INITIATE');
+        return { ok: true, pendingDesignation };
+    };
+
+    window.__TAK_FLOW_TEST__ = {
+        listTracks() {
+            return trackManager.getTrackData().map((track) => ({
+                id: track.id,
+                type: track.type,
+                subtype: track.subtype,
+                confidenceScore: trackManager.getTrackConfidenceScore(track.id),
+                provenance: trackManager.getProvenance(track.id)
+            }));
+        },
+        selectTrack(trackId) {
+            domController.selectTrack(trackId);
+            return trackId;
+        },
+        stageDesignation,
+        setReconMode(active) {
+            store.set('reconMode', Boolean(active));
+            return store.get('reconMode');
+        },
+        commitDesignation() {
+            return domController.commitDesignation();
+        },
+        undoDesignation() {
+            domController.undoLastDesignation();
+            return true;
+        },
+        forceTelemetry(telemetry = {}) {
+            const nextTelemetry = {
+                ...trackManager.getSwarmTelemetry(),
+                polarization: Number(telemetry.polarization ?? trackManager.getSwarmTelemetry().polarization ?? 0),
+                milling: Number(telemetry.milling ?? trackManager.getSwarmTelemetry().milling ?? 0),
+                cohesion: Number(telemetry.cohesion ?? trackManager.getSwarmTelemetry().cohesion ?? 0),
+                activeCount: Number(telemetry.activeCount ?? trackManager.getSwarmTelemetry().activeCount ?? 0),
+                com: new THREE.Vector2(
+                    Number(telemetry.com?.x ?? trackManager.getSwarmTelemetry().com?.x ?? 0),
+                    Number(telemetry.com?.y ?? trackManager.getSwarmTelemetry().com?.y ?? 0)
+                )
+            };
+            trackManager.testTelemetryOverride = nextTelemetry;
+            domController.update();
+            return {
+                critical: domController.vjepaWarningActive,
+                telemetry: {
+                    polarization: nextTelemetry.polarization,
+                    milling: nextTelemetry.milling,
+                    cohesion: nextTelemetry.cohesion,
+                    activeCount: nextTelemetry.activeCount,
+                    com: { x: nextTelemetry.com.x, y: nextTelemetry.com.y }
+                }
+            };
+        },
+        clearTelemetryOverride() {
+            trackManager.testTelemetryOverride = null;
+            domController.update();
+            return true;
+        },
+        openReplay() {
+            replayPlayer.openTransport(trackManager.replayCapture);
+            return replayPlayer.isOpen;
+        },
+        executeRecommendedAction() {
+            domController.executeVjepaReconMacro();
+            return {
+                counterfactualActive: Boolean(trackManager.counterfactualScanState?.active),
+                replayEventOptions: replayPlayer.eventJumpEl?.options?.length || 0,
+                latestLog: (store.get('opsLog') || [])[0] || null
+            };
+        },
+        closeReplay() {
+            replayPlayer.closeReplay();
+            return replayPlayer.isOpen;
+        },
+        captureReplayEvent(eventType) {
+            return trackManager.replayCapture?.captureEvent(eventType);
+        },
+        getReplayExportMetadata() {
+            const payload = replayCapture.serializeSession();
+            return {
+                filename: replayCapture.getExportFilename(),
+                version: payload.version,
+                ringBufferLength: payload.ringBuffer.length,
+                eventSnapshotLength: payload.eventSnapshots.length
+            };
+        },
+        getUiState() {
+            return {
+                selectedTrackId: store.get('selectedTrackId'),
+                pendingDesignation: store.get('pendingDesignation'),
+                undoDesignation: store.get('undoDesignation'),
+                reconMode: store.get('reconMode'),
+                alertText: domController.alertTextEl?.textContent || '',
+                replayOpen: replayPlayer.isOpen,
+                replayEventOptions: replayPlayer.eventJumpEl?.options?.length || 0,
+                recommendedBadge: domController.recommendedActionsBadgeEl?.textContent || '',
+                recommendedCritical: domController.recommendedActionsPanelEl?.classList.contains('critical') || false,
+                counterfactualActive: Boolean(trackManager.counterfactualScanState?.active),
+                opsLog: structuredClone(store.get('opsLog') || [])
+            };
+        }
+    };
+}
 
 // Logic: Interactions
 const raycaster = new THREE.Raycaster();

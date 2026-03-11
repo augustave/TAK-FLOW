@@ -63,6 +63,7 @@ export class TrackManager {
             com: new THREE.Vector2(),
             activeCount: 0
         };
+        this.testTelemetryOverride = null;
         this.counterfactualScanState = {
             active: false,
             x: 0,
@@ -835,7 +836,7 @@ export class TrackManager {
     }
 
     getSwarmTelemetry() {
-        return this.swarmTelemetry;
+        return this.testTelemetryOverride || this.swarmTelemetry;
     }
 
     setReplayMode(active) {
