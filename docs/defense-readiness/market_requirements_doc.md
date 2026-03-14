@@ -5,8 +5,9 @@
 - version: v1
 - owner: Tao Conrad
 - last_updated: 2026-03-11
-- status: working-draft
-
+- status: reviewed
+- reviewed_by: Tao Conrad
+- reviewed_on: 2026-03-13
 ## Objective
 
 Define the defense-adjacent problem TAK-FLOW is solving today and bound the claims to what the repository can currently support.
@@ -48,9 +49,9 @@ Operators in dense, degraded, multi-domain theaters need interfaces that surface
 
 ## Evidence Links
 
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/README.md`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/package.json`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/DOMController.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/TrackManager.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayCapture.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayPlayer.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/README.md`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/package.json`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/DOMController.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/TrackManager.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayCapture.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayPlayer.js`

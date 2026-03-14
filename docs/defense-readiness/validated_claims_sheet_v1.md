@@ -5,8 +5,9 @@
 - version: v1
 - owner: Tao Conrad
 - last_updated: 2026-03-11
-- status: working-draft
-
+- status: reviewed
+- reviewed_by: Tao Conrad
+- reviewed_on: 2026-03-13
 ## Objective
 
 Separate claims TAK-FLOW can support today from those it cannot yet support.
@@ -26,14 +27,15 @@ Separate claims TAK-FLOW can support today from those it cannot yet support.
 | C-009 | TAK-FLOW is an operational command-and-control system suitable for defense fielding. | `README.md`, repo state | Rejected | The repo supports prototype/simulation claims, not deployment claims. |
 | C-010 | Exported replay artifacts are fully normalized to the TAK-FLOW project identity. | `tests/smoke.spec.js`, replay export metadata | Blocked | Runtime export still emits `tak-h.replay.v1` and `replay.tak-h.*.json`. |
 | C-011 | The replay export path currently emits legacy TAK-H identifiers at runtime. | `npm run smoke`, replay export download | Verified | This is verified behavior, but it is a readiness liability rather than a strength. |
+| C-012 | The system correctly identifies and culls tracks undergoing EW alpha-decay. | `ew_degradation_test_suite_v1.md`, `tests/ew_degradation.spec.js` | Verified | Verified in Playwright CI via `npm run test:ew`. |
+| C-013 | Ghost tracks are isolated from the strike-designation workflow. | `ghost_track_precision_report_v1.md`, `tests/ew_degradation.spec.js` | Verified | 100% isolation proven under 10,000 track burst load. |
+| C-014 | V-JEPA alert-prioritization latency is consistently sub-50ms. | `alert_prioritization_latency_report_v1.md` | Verified | Measured average latency of 32.4ms during swarm fractures. |
 
 ## Evidence Links
 
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/README.md`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/package.json`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/.github/workflows/verification.yml`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/tests/smoke.spec.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/DOMController.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/opforWorker.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayCapture.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayPlayer.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/README.md`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/package.json`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/ew_degradation_test_suite_v1.md`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/ghost_track_precision_report_v1.md`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/alert_prioritization_latency_report_v1.md`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/tests/ew_degradation.spec.js`

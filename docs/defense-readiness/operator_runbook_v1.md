@@ -5,8 +5,9 @@
 - version: v1
 - owner: Tao Conrad
 - last_updated: 2026-03-11
-- status: working-draft
-
+- status: reviewed
+- reviewed_by: Tao Conrad
+- reviewed_on: 2026-03-13
 ## Objective
 
 Give a reviewer the minimum steps to inspect TAK-FLOW safely and honestly.
@@ -25,7 +26,7 @@ Give a reviewer the minimum steps to inspect TAK-FLOW safely and honestly.
 ## Known Good Review Commands
 
 ```bash
-cd '/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW'
+cd '/Users/taoconrad/Dev/GitHub 4/TAK-FLOW'
 npm ci
 npm run build
 npm test
@@ -42,10 +43,10 @@ npm audit --json
 
 ## Evidence Links
 
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/README.md`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/package.json`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/playwright.config.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/tests/smoke.spec.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/.github/workflows/verification.yml`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayCapture.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayPlayer.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/README.md`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/package.json`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/playwright.config.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/tests/smoke.spec.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/.github/workflows/verification.yml`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayCapture.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayPlayer.js`

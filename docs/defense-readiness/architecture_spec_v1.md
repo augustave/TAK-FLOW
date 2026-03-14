@@ -5,8 +5,9 @@
 - version: v1
 - owner: Tao Conrad
 - last_updated: 2026-03-11
-- status: working-draft
-
+- status: reviewed
+- reviewed_by: Tao Conrad
+- reviewed_on: 2026-03-13
 ## Objective
 
 Summarize the current architecture, component responsibilities, and evidence-producing pathways.
@@ -72,12 +73,12 @@ Summarize the current architecture, component responsibilities, and evidence-pro
 
 ## Evidence Links
 
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/main.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/TrackManager.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/DOMController.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/opforWorker.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayCapture.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayPlayer.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/MapEngine.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/tests/smoke.spec.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/.github/workflows/verification.yml`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/main.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/TrackManager.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/DOMController.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/opforWorker.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayCapture.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayPlayer.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/MapEngine.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/tests/smoke.spec.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/.github/workflows/verification.yml`
