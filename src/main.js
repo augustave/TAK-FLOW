@@ -33,6 +33,10 @@ trackManager.replayCapture = replayCapture;
 replayCapture.start();
 const replayPlayer = new ReplayPlayer(trackManager, domController);
 
+// HUDController (constructed earlier) toggles body.high-contrast before this fires,
+// so the 3D palette re-reads the post-toggle CSS token values.
+store.subscribe('isHighContrast', () => trackManager.syncPaletteFromCss());
+
 opsLog.setExportContext(() => ({
     store,
     mapEngine,

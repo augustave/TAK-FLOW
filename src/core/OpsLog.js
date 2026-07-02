@@ -361,7 +361,7 @@ export class OpsLog {
         const now = new Date();
         const context = this.exportContextGetter ? this.exportContextGetter() : {};
         const report = {
-            reportType: 'TAK-H TELEMETRY REPORT',
+            reportType: 'TAK-FLOW TELEMETRY REPORT',
             exportedAtIso: now.toISOString(),
             exportedAtEpochMs: now.getTime(),
             runtime: {

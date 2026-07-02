@@ -1,6 +1,8 @@
 import { store } from './Store.js';
 
-const SNAPSHOT_VERSION = 'tak-h.replay.v1';
+export const SNAPSHOT_VERSION = 'tak-flow.replay.v1';
+// Older exports remain importable; new sessions always serialize as SNAPSHOT_VERSION.
+export const LEGACY_SNAPSHOT_VERSIONS = new Set(['tak-h.replay.v1']);
 const CAPTURE_INTERVAL_MS = 250;
 const MAX_RING_BUFFER = 14400;
 
@@ -72,7 +74,7 @@ export class ReplayCapture {
                 cohesion: safeNumber(this.trackManager.swarmTelemetry?.cohesion),
                 activeCount: safeNumber(this.trackManager.swarmTelemetry?.activeCount)
             },
-            vejpaGate: {
+            vjepaGate: {
                 active: Boolean(this.domController?.vjepaWarningActive),
                 onset: this.domController?.vjepaGateOnsetMs ?? null
             },
@@ -128,7 +130,7 @@ export class ReplayCapture {
     }
 
     getExportFilename() {
-        return `replay.tak-h.${this.sessionId}.${this.startTimestamp}.json`;
+        return `replay.tak-flow.${this.sessionId}.${this.startTimestamp}.json`;
     }
 
     serializeSession() {
@@ -184,7 +186,9 @@ export class ReplayCapture {
             throw new Error(`Replay import failed: invalid JSON (${err.message})`);
         }
 
-        if (!parsed || parsed.version !== SNAPSHOT_VERSION) {
+        const versionSupported = parsed
+            && (parsed.version === SNAPSHOT_VERSION || LEGACY_SNAPSHOT_VERSIONS.has(parsed.version));
+        if (!versionSupported) {
             throw new Error('Replay import failed: unsupported schema version');
         }
         if (!Array.isArray(parsed.ringBuffer) || !Array.isArray(parsed.eventSnapshots)) {

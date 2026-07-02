@@ -45,6 +45,7 @@
             --border-active: rgba(255, 255, 255, 0.8);
             --blue-force: #7bc6ff;
             --red-force: #ff6a6a;
+            --yellow-unknown: #ffe066;
             --cyan-data: #82f7ff;
             --amber-alert: #ffb04a;
         }
@@ -597,6 +598,11 @@
 
         .replay-marker.marker-designation {
             background: rgba(255, 51, 51, 0.9);
+        }
+
+        .replay-marker.marker-vjepa {
+            background: var(--amber-alert);
+            width: 3px;
         }
 
         .replay-controls {

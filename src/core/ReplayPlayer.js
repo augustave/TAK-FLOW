@@ -1,4 +1,4 @@
-const SNAPSHOT_VERSION = 'tak-h.replay.v1';
+import { SNAPSHOT_VERSION } from './ReplayCapture.js';
 
 function formatReplayTimestamp(timestamp) {
     const totalMs = Math.max(0, Number(timestamp) || 0);
@@ -221,7 +221,8 @@ export class ReplayPlayer {
             this.tickListEl.appendChild(option);
 
             const marker = document.createElement('span');
-            marker.className = `replay-marker ${snapshot.triggerEvent === 'VEJPA_ONSET' ? 'marker-vejpa' : ''} ${snapshot.triggerEvent === 'DESIGNATION_CONFIRM' ? 'marker-designation' : ''}`;
+            const isVjepaOnset = snapshot.triggerEvent === 'V_JEPA_ONSET' || snapshot.triggerEvent === 'VEJPA_ONSET'; // legacy replays
+            marker.className = `replay-marker ${isVjepaOnset ? 'marker-vjepa' : ''} ${snapshot.triggerEvent === 'DESIGNATION_CONFIRM' ? 'marker-designation' : ''}`;
             marker.style.left = `${(snapshot.timestamp / totalDuration) * 100}%`;
             marker.title = snapshot.triggerEvent;
             this.markersEl.appendChild(marker);

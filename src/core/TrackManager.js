@@ -101,6 +101,21 @@ export class TrackManager {
         this.initTracks();
     }
 
+    // Keep 3D palette locked to the CSS custom-property tokens so DOM panels and
+    // viewport symbology always agree (including high-contrast remaps).
+    syncPaletteFromCss() {
+        const styles = getComputedStyle(document.body);
+        const apply = (type, varName, fallback) => {
+            const raw = styles.getPropertyValue(varName).trim() || fallback;
+            this.typeColors[type].set(raw);
+            const mesh = this.instances[type]?.mesh;
+            if (mesh?.material?.color) mesh.material.color.set(raw);
+        };
+        apply('hostile', '--red-force', '#ff3333');
+        apply('friendly', '--blue-force', '#4a9eff');
+        apply('unknown', '--yellow-unknown', '#ffcc00');
+    }
+
     initOpforWorker() {
         this.opforWorker = new Worker(new URL('./opforWorker.js', import.meta.url), { type: 'module' });
         this.workerPending = false;

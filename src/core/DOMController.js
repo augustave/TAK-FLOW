@@ -844,7 +844,7 @@ export class DOMController {
         if (isCritical) {
             if (!wasCritical && !isReplay) {
                 this.vjepaGateOnsetMs = Date.now() - (this.trackManager.replayCapture?.startTimestamp || Date.now());
-                this.trackManager.replayCapture?.captureEvent('VEJPA_ONSET');
+                this.trackManager.replayCapture?.captureEvent('V_JEPA_ONSET');
                 this.trackManager.replayCapture?.captureEvent('RECOMMENDED_ACTION_SUPERSESSION');
             }
             if (!this.vjepaWarningLogged && !isReplay) {
@@ -858,7 +858,7 @@ export class DOMController {
                 this.vjepaWarningLogged = true;
             }
         } else {
-            if (wasCritical && !isReplay) this.trackManager.replayCapture?.captureEvent('VEJPA_CLEAR');
+            if (wasCritical && !isReplay) this.trackManager.replayCapture?.captureEvent('V_JEPA_CLEAR');
             this.vjepaGateOnsetMs = null;
             this.vjepaWarningLogged = false;
             this.vjepaHoverActive = false;
@@ -877,8 +877,9 @@ export class DOMController {
         if (!snapshot) return;
         this.renderTelemetrySnapshot(snapshot.orderParams || {});
 
-        this.vjepaWarningActive = Boolean(snapshot.vejpaGate?.active);
-        this.vjepaGateOnsetMs = snapshot.vejpaGate?.onset ?? null;
+        const restoredGate = snapshot.vjepaGate ?? snapshot.vejpaGate; // legacy replays
+        this.vjepaWarningActive = Boolean(restoredGate?.active);
+        this.vjepaGateOnsetMs = restoredGate?.onset ?? null;
         this.vjepaWarningLogged = this.vjepaWarningActive;
         this.vjepaHoverActive = Boolean(snapshot.uiState?.vjepaHoverActive);
         this.vjepaAnchor = this.vjepaWarningActive ? this.getVjepaAnchor(snapshot.orderParams || {}) : null;
@@ -907,8 +908,9 @@ export class DOMController {
         const uiState = snapshot?.uiState || {};
         const selectedTrackId = uiState.selectedTrackId || null;
         this.replayLogEntries = [];
-        this.vjepaWarningActive = Boolean(snapshot?.vejpaGate?.active);
-        this.vjepaGateOnsetMs = snapshot?.vejpaGate?.onset ?? null;
+        const liveGate = snapshot?.vjepaGate ?? snapshot?.vejpaGate; // legacy replays
+        this.vjepaWarningActive = Boolean(liveGate?.active);
+        this.vjepaGateOnsetMs = liveGate?.onset ?? null;
         this.vjepaWarningLogged = this.vjepaWarningActive;
         this.vjepaHoverActive = Boolean(uiState.vjepaHoverActive);
         this.vjepaAnchor = this.vjepaWarningActive ? this.getVjepaAnchor(snapshot?.orderParams || {}) : null;

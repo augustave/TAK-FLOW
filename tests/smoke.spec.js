@@ -60,14 +60,14 @@ test.describe('TAK-FLOW smoke', () => {
     const downloadPromise = page.waitForEvent('download');
     await page.locator('#replay-export').click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^replay\.tak-h\..+\.json$/);
+    expect(download.suggestedFilename()).toMatch(/^replay\.tak-flow\..+\.json$/);
 
     const path = await download.path();
     expect(path).toBeTruthy();
 
     const replayPayload = await page.evaluate(() => window.__TAK_FLOW_TEST__.getReplayExportMetadata());
 
-    expect(replayPayload.version).toBe('tak-h.replay.v1');
+    expect(replayPayload.version).toBe('tak-flow.replay.v1');
     expect(replayPayload.ringBufferLength).toBeGreaterThan(0);
     expect(replayPayload.eventSnapshotLength).toBeGreaterThan(0);
   });
