@@ -36,24 +36,9 @@ test.describe('TAK-FLOW training presets', () => {
     await page.selectOption('#training-preset-select', 'GHOST-DISCRIMINATION-DRILL');
     await page.click('#btn-preset-arm');
 
-    // Badge + preset state armed.
-    await expect(page.locator('#instructor-badge')).toContainText('ARMED');
-    expect(await page.evaluate(() => window.__TAK_FLOW_TEST__.getTrainingPreset()))
-      .toBe('GHOST-DISCRIMINATION-DRILL');
-
-    // Patrol population (150 generated + 10 named).
-    await expect.poll(async () =>
-      page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
-    , { timeout: 15000 }).toBeLessThan(400);
-
-    // Decoy family armed in the store and ghosts spawn from the DJI family.
-    // Ghost observation runs page-side in one task: ghosts live 8-12s and
-    // CDP round-trip latency on slow runners can outlast them.
-    const decoyState = await page.evaluate(() => window.__TAK_FLOW_TEST__.getDecoySimState());
-    expect(decoyState.running).toBe(true);
-    expect(decoyState.profileId).toBe('dji-test');
-    expect(decoyState.activeDecoys.length).toBe(12);
-
+    // Observe the drill ghosts FIRST, page-side in one task: the arm burst
+    // spawns once and its ghosts live only 8-12s — every other assertion in
+    // this test reads durable state and can wait.
     const ghostObservation = await page.evaluate(async () => {
       const api = window.__TAK_FLOW_TEST__;
       const deadline = Date.now() + 15000;
@@ -73,6 +58,22 @@ test.describe('TAK-FLOW training presets', () => {
     expect(ghostObservation, 'drill ghosts never appeared').toBeTruthy();
     expect(ghostObservation.allDji).toBe(true);
     expect(ghostObservation.allBelowCeiling).toBe(true);
+
+    // Badge + preset state armed.
+    await expect(page.locator('#instructor-badge')).toContainText('ARMED');
+    expect(await page.evaluate(() => window.__TAK_FLOW_TEST__.getTrainingPreset()))
+      .toBe('GHOST-DISCRIMINATION-DRILL');
+
+    // Patrol population (150 generated + 10 named).
+    await expect.poll(async () =>
+      page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
+    , { timeout: 15000 }).toBeLessThan(400);
+
+    // Decoy family armed in the store.
+    const decoyState = await page.evaluate(() => window.__TAK_FLOW_TEST__.getDecoySimState());
+    expect(decoyState.running).toBe(true);
+    expect(decoyState.profileId).toBe('dji-test');
+    expect(decoyState.activeDecoys.length).toBe(12);
 
     // Preset id rides along in replay snapshots for after-action review.
     // captureReplayEvent returns the snapshot it just took — index math over
