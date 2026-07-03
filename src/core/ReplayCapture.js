@@ -18,7 +18,7 @@ function safeNumber(value, fallback = 0) {
 }
 
 export class ReplayCapture {
-    constructor(trackManager, domController) {
+    constructor(trackManager, domController, options = {}) {
         this.trackManager = trackManager;
         this.domController = domController;
         this.ringBuffer = [];
@@ -28,12 +28,15 @@ export class ReplayCapture {
         this._tickInterval = null;
         this._lastCaptureAt = -Infinity;
         this._seenOpsLogKeys = new Set();
+        // Each ring tick clones the full trackState (1,500+ rows on the swarm
+        // profile); a slower cadence keeps saturated environments responsive.
+        this.captureIntervalMs = Number(options.intervalMs) || CAPTURE_INTERVAL_MS;
     }
 
     start() {
         if (this._tickInterval) return;
         window.opsLogInstance?.addEntry('MODE', 'SYSTEM', 'REPLAY CAPTURE ACTIVE', 0, 999);
-        this._tickInterval = window.setInterval(() => this._tickCapture(), CAPTURE_INTERVAL_MS);
+        this._tickInterval = window.setInterval(() => this._tickCapture(), this.captureIntervalMs);
     }
 
     stop() {
@@ -150,7 +153,7 @@ export class ReplayCapture {
     _tickCapture(force = false) {
         if (this.trackManager?.replayMode) return null;
         const now = performance.now();
-        if (!force && now - this._lastCaptureAt < (CAPTURE_INTERVAL_MS - 5)) return;
+        if (!force && now - this._lastCaptureAt < (this.captureIntervalMs - 5)) return;
         this._lastCaptureAt = now;
         const snapshot = this._buildSnapshot(null);
         this.ringBuffer.push(snapshot);

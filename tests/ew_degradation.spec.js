@@ -52,7 +52,9 @@ test.describe('TAK-FLOW EW Degradation & Ghost-Track Mechanics', () => {
         const designable = api.canDesignate(ghost.id);
         api.selectTrack(ghost.id);
         const staged = api.stageDesignation(ghost.id);
-        return { ghost, designable, staged };
+        // Read the flash banner in the same task — it expires quickly.
+        const alertText = document.getElementById('alert-text')?.textContent || '';
+        return { ghost, designable, staged, alertText };
       });
       return Boolean(result);
     }, { timeout: 10000 }).toBe(true);
@@ -65,7 +67,7 @@ test.describe('TAK-FLOW EW Degradation & Ghost-Track Mechanics', () => {
     expect(result.designable).toBe(false);
     expect(result.staged.ok).toBe(false);
     expect(result.staged.reason).toBe('strike-blocked');
-    await expect(page.locator('#alert-text')).toContainText('INSUFFICIENT TRACK PROVENANCE');
+    expect(result.alertText).toContain('INSUFFICIENT TRACK PROVENANCE');
   });
 
   test('EMCON alpha-decay and track culling', async ({ page }) => {

@@ -59,13 +59,16 @@ test.describe('TAK-FLOW CONOPS mission: Contested Littoral Watch', () => {
 
     // Step 4 — Zero-trust gate: ghost designation is blocked with the
     // INSUFFICIENT TRACK PROVENANCE guardrail.
+    // Alert banner text is read in the same task: the strike-abort flash is
+    // temporary and expires between round-trips on slow runners.
     const blocked = await page.evaluate((id) => {
       window.__TAK_FLOW_TEST__.selectTrack(id);
-      return window.__TAK_FLOW_TEST__.stageDesignation(id);
+      const staged = window.__TAK_FLOW_TEST__.stageDesignation(id);
+      return { ...staged, alertText: document.getElementById('alert-text')?.textContent || '' };
     }, ghost.id);
     expect(blocked.ok).toBe(false);
     expect(blocked.reason).toBe('strike-blocked');
-    await expect(page.locator('#alert-text')).toContainText('INSUFFICIENT TRACK PROVENANCE');
+    expect(blocked.alertText).toContain('INSUFFICIENT TRACK PROVENANCE');
     // Note: the ops log is a severity-sorted 50-entry queue; the severity-1
     // guardrail entry is evicted by the swarm's severity-2 threat alerts, so
     // the audit assertion here is the alert surface + blocked reason.

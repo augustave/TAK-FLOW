@@ -28,7 +28,11 @@ const trackManager = new TrackManager(mapEngine.overlayGroup);
 const domController = new DOMController(trackManager, opsLog);
 const drawController = new DrawController(mapEngine.scene, mapEngine.overlayGroup);
 const splatController = new SplatController(mapEngine.scene, mapEngine.overlayGroup);
-const replayCapture = new ReplayCapture(trackManager, domController);
+// e2e runs on shared CI runners where the 4 Hz full-state clone saturates the
+// main thread; a 600ms cadence keeps the page responsive there.
+const replayCapture = new ReplayCapture(trackManager, domController, {
+    intervalMs: isE2EMode ? 600 : 250
+});
 trackManager.replayCapture = replayCapture;
 replayCapture.start();
 const replayPlayer = new ReplayPlayer(trackManager, domController);

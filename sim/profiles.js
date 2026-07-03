@@ -8,6 +8,6 @@ window.NARUTO_SIM_PROFILES = [
     {
         id: 'dji-test', displayName: 'DJI Test', startString: 'DJITEST-', endString: 'AAAAAAAA',
         macPrefixes: ['481CB9', '60601F', 'E47A2C', '34D262', 'F41A79'],
-        ghost: { confidenceRange: [0.3, 0.49], lifetimeMs: [8000, 12000], speed: 15.0, spoofWindow: { onMs: 2000, offMs: 2000 } }
+        ghost: { confidenceRange: [0.3, 0.49], lifetimeMs: [8000, 12000], speed: 15.0, spoofWindow: { onMs: 4000, offMs: 4000 } }
     }
 ];

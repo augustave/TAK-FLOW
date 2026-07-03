@@ -16,16 +16,17 @@ async function setupDeterminismApi(page) {
       id: g.id, numericId: g.numericId, profileId: g.profileId || null, confidence: g.confidence
     }));
 
-    // Scrub to a frame and sample everything in the SAME task: the restored
-    // snapshot (via replay:frame), the live-state rows for its ids, and the
-    // rebuilt ghost/EMCON metadata maps.
-    api.scrubAndSample = (value) => {
+    // Jump to an event frame and sample everything in the SAME task: the
+    // restored snapshot (via replay:frame), the live-state rows for its ids,
+    // and the rebuilt ghost/EMCON metadata maps. An explicit event marker is
+    // used (not the last ring frame): ring ticks starve on slow runners, so
+    // the newest ring frame can postdate ghost expiry.
+    api.jumpAndSample = (eventType) => {
       let frameSnapshot = null;
       const onFrame = (e) => { frameSnapshot = e.detail.snapshot; };
       window.addEventListener('replay:frame', onFrame);
-      const scrub = document.getElementById('replay-scrub');
-      scrub.value = String(value);
-      scrub.dispatchEvent(new Event('input', { bubbles: true }));
+      const ctx = window.opsLogInstance.exportContextGetter();
+      ctx.replayPlayer.jumpToEvent(eventType, 0);
       window.removeEventListener('replay:frame', onFrame);
       if (!frameSnapshot) return { error: 'no replay:frame fired' };
 
@@ -68,19 +69,19 @@ test.describe('TAK-FLOW replay viewport determinism', () => {
       page.evaluate(() => window.__TAK_FLOW_TEST__.listGhosts().length)
     , { timeout: 10000 }).toBeGreaterThan(0);
 
-    // Let the capture record frames containing all classes, then mark one.
-    await page.waitForTimeout(1200);
+    // Mark an event frame while ghosts + submerged UUVs are provably live —
+    // captureReplayEvent snapshots synchronously.
+    await page.waitForTimeout(800);
     await page.evaluate(() => window.__TAK_FLOW_TEST__.captureReplayEvent('DETERMINISM_MARKER'));
 
     await page.evaluate(() => window.__TAK_FLOW_TEST__.openReplay());
     await expect(page.locator('#replay-transport-bar')).toBeVisible();
 
-    // Scrub to the last frame; every restored row's live state must equal the
-    // snapshot row exactly (same task — no worker frame in between).
-    const sample = await page.evaluate(() => {
-      const scrub = document.getElementById('replay-scrub');
-      return window.__TAK_FLOW_TEST__.scrubAndSample(scrub.max);
-    });
+    // Jump to the marker frame; every restored row's live state must equal
+    // the snapshot row exactly (same task — no worker frame in between).
+    const sample = await page.evaluate(() =>
+      window.__TAK_FLOW_TEST__.jumpAndSample('DETERMINISM_MARKER')
+    );
     expect(sample.error).toBeUndefined();
 
     const byType = new Map();

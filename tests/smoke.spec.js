@@ -10,6 +10,15 @@ test.describe('TAK-FLOW smoke', () => {
   test('enforces designation guardrails and supports undo', async ({ page }) => {
     await getTestApi(page);
 
+    // The guardrail assertions are population-agnostic; the patrol profile
+    // (~160 tracks) keeps the page responsive on saturated CI runners where
+    // the 1,500-track boot profile starves actionability checks.
+    await page.selectOption('#scenario-profile-select', 'patrol');
+    await page.click('#btn-scenario-load');
+    await expect.poll(async () =>
+      page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
+    , { timeout: 15000 }).toBeLessThan(400);
+
     const trackSelection = await page.evaluate(() => {
       const tracks = window.__TAK_FLOW_TEST__.listTracks();
       const low = tracks.find((track) => track.confidenceScore < 0.6 && !track.id.startsWith('GHOST-'));
