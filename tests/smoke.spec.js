@@ -10,15 +10,6 @@ test.describe('TAK-FLOW smoke', () => {
   test('enforces designation guardrails and supports undo', async ({ page }) => {
     await getTestApi(page);
 
-    // The guardrail assertions are population-agnostic; the patrol profile
-    // (~160 tracks) keeps the page responsive on saturated CI runners where
-    // the 1,500-track boot profile starves actionability checks.
-    await page.selectOption('#scenario-profile-select', 'patrol');
-    await page.click('#btn-scenario-load');
-    await expect.poll(async () =>
-      page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
-    , { timeout: 15000 }).toBeLessThan(400);
-
     const trackSelection = await page.evaluate(() => {
       const tracks = window.__TAK_FLOW_TEST__.listTracks();
       const low = tracks.find((track) => track.confidenceScore < 0.6 && !track.id.startsWith('GHOST-'));
@@ -55,6 +46,12 @@ test.describe('TAK-FLOW smoke', () => {
 
   test('exports replay artifacts and opens replay transport', async ({ page }) => {
     await getTestApi(page);
+
+    // The e2e ring capture ticks at 600ms; wait for the first tick so the
+    // exported session provably contains ring data.
+    await expect.poll(async () =>
+      page.evaluate(() => window.__TAK_FLOW_TEST__.getReplayExportMetadata().ringBufferLength)
+    , { timeout: 10000 }).toBeGreaterThan(0);
 
     await page.evaluate(() => {
       const high = window.__TAK_FLOW_TEST__.listTracks().find((track) => track.confidenceScore >= 0.6 && !track.id.startsWith('GHOST-'));

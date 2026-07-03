@@ -35,6 +35,8 @@ Each step names the operator action, the UI surface it exercises, and the automa
 
 Mission runtime under automation: ~5 seconds of active phases (well inside the smoke-lane budget).
 
+Automation scale note: locally the mission runs at canonical MASSED SWARM scale (1,500+ tracks). On shared CI runners the identical mission beats execute at drill (patrol) scale — the swarm profile's per-frame kinematics exceed those runners' CPU. e2e sessions likewise boot at drill scale; swarm is loaded explicitly where a spec needs it.
+
 ## Supported Mission Themes
 
 - uncertainty-aware track management

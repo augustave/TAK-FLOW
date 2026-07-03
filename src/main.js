@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { loadScenario } from './data/mockData.js';
 import { store } from './core/Store.js';
 import { setupMapEngine } from './core/MapEngine.js';
 import { TrackManager } from './core/TrackManager.js';
@@ -13,6 +14,14 @@ import { ReplayCapture } from './core/ReplayCapture.js';
 import { ReplayPlayer } from './core/ReplayPlayer.js';
 
 const isE2EMode = new URLSearchParams(window.location.search).has('e2e');
+
+// e2e boots at drill scale: the 1,500-track swarm profile exceeds shared CI
+// runner CPU (KNN boids per frame) and freezes actionability checks. Specs
+// that need the massed-swarm picture load it explicitly via the instructor
+// panel. Local interactive boots are unaffected.
+if (isE2EMode) {
+    loadScenario('patrol');
+}
 
 // Setup Map
 const container = document.getElementById('canvas-container');

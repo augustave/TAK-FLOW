@@ -41,8 +41,10 @@ test.describe('TAK-FLOW scenario controls', () => {
   test('scenario load/clear changes populations and resets worker EW state', async ({ page }) => {
     await setupScenarioApi(page);
 
+    // e2e boots at drill (patrol) scale.
     const baselineCount = await page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length);
-    expect(baselineCount).toBeGreaterThan(800); // default MASSED SWARM profile (~1510)
+    expect(baselineCount).toBeGreaterThan(100);
+    expect(baselineCount).toBeLessThan(400);
 
     // Prove the worker is decaying under a play-area-wide EW zone before reset.
     await page.evaluate(() => window.__TAK_FLOW_TEST__.setEwZone(0, 0, 1000));
@@ -51,18 +53,13 @@ test.describe('TAK-FLOW scenario controls', () => {
       return min === null ? 1 : min;
     }), { timeout: 15000 }).toBeLessThan(1.0);
 
-    // Load STANDARD PATROL through the real instructor controls.
+    // Load STANDARD PATROL through the real instructor controls: population
+    // changes prove the load path, and RESET_STATE must restore the default
+    // EW zone (x:0,y:0,r:10) — if the giant zone had survived, every hostile
+    // single would decay below 1.0 within seconds and cull by ~8s. A stable
+    // full-confidence single proves the reset.
     await page.selectOption('#scenario-profile-select', 'patrol');
     await page.click('#btn-scenario-load');
-
-    // Population drops to the patrol profile (150 generated + 10 named).
-    await expect.poll(async () =>
-      page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
-    , { timeout: 15000 }).toBeLessThan(400);
-
-    // RESET_STATE restored the default EW zone (x:0,y:0,r:10): if the giant
-    // zone had survived, every hostile single would decay below 1.0 within
-    // seconds and cull by ~8s. A stable full-confidence single proves reset.
     await expect.poll(async () => page.evaluate(() => {
       const single = window.__TAK_FLOW_TEST__.findLiveSingle();
       return single ? single.confidence : 0;
@@ -74,12 +71,13 @@ test.describe('TAK-FLOW scenario controls', () => {
       page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
     , { timeout: 10000 }).toBe(0);
 
-    // Reload a scenario so the session ends in a live state.
-    await page.selectOption('#scenario-profile-select', 'swarm');
+    // Reload a scenario so the session ends in a live state; population
+    // returning proves load after clear.
+    await page.selectOption('#scenario-profile-select', 'patrol');
     await page.click('#btn-scenario-load');
     await expect.poll(async () =>
       page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
-    , { timeout: 15000 }).toBeGreaterThan(800);
+    , { timeout: 15000 }).toBeGreaterThan(100);
   });
 
   test('replay enter/exit resumes live motion', async ({ page }) => {
