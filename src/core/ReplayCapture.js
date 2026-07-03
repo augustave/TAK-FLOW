@@ -108,6 +108,7 @@ export class ReplayCapture {
             },
             uiState: {
                 selectedTrackId: store.get('selectedTrackId') || null,
+                trainingPreset: store.get('trainingPreset') || null,
                 reconMode: Boolean(store.get('reconMode')),
                 destinationMode: Boolean(this.domController?.destinationMode),
                 pendingDesignation: pendingDesignation ? { ...pendingDesignation } : null,

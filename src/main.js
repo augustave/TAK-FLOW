@@ -185,12 +185,15 @@ if (isE2EMode) {
             trackManager.opforWorker.postMessage({ type: 'SET_EW_ZONES', zones: [zone] });
             return zone;
         },
-        injectGhostTracks(count) {
+        injectGhostTracks(count, profileId = null) {
             const simState = store.get('decoySim') || { running: false, activeDecoys: [], burstCount: 0 };
+            const profile = profileId ? decoySim.profiles.find((p) => p.id === profileId) : null;
             store.set('decoySim', {
                 running: true,
                 activeDecoys: new Array(count).fill({ ssid: 'MOCK-GHOST', mac: '00:00:00', channel: '01' }),
-                burstCount: (simState.burstCount || 0) + 1
+                burstCount: (simState.burstCount || 0) + 1,
+                profileId: profile ? profile.id : (simState.profileId || null),
+                ghost: profile?.ghost ? { ...profile.ghost } : (simState.ghost || null)
             });
             const wasPending = trackManager.workerPending;
             trackManager.workerPending = false;

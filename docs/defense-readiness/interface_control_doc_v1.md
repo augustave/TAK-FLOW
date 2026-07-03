@@ -50,7 +50,7 @@ Constraints transcribed from code:
 
 - Only tracks with `isSwarm` (subtype `'UAS SWARM'` or one of the four UUV subtypes) are serialized. Non-swarm tracks never cross the worker boundary.
 - Worker skips sentinel rows where `id === 0 && x === 0 && y === 0`.
-- Message payload keys: `{ buffer, decoyActive, decoyBurstCount, alphaEarthBuffer? }`. `decoyActive = Boolean(store.decoySim.running)`, `decoyBurstCount = Number(store.decoySim.burstCount) || 0`. The worker also accepts a bare `ArrayBuffer` as `e.data`.
+- Message payload keys: `{ buffer, decoyActive, decoyBurstCount, decoyProfileId, decoyGhostProfile, alphaEarthBuffer? }`. `decoyActive = Boolean(store.decoySim.running)`, `decoyBurstCount = Number(store.decoySim.burstCount) || 0`; `decoyProfileId` / `decoyGhostProfile` carry the active RF decoy family (`{ confidenceRange, lifetimeMs, speed, spoofWindow { onMs, offMs } }`, null → worker defaults). The worker also accepts a bare `ArrayBuffer` as `e.data`.
 - `alphaEarthBuffer` (optional) is defined as a copy (`aeBuffer.slice(0)`) of `mapEngine.alphaEarthData` — a **synthetic terrain-embedding stub** (see architecture spec). Honesty note: the fetch path reads `window.opsLogInstance.exportContext`, but `OpsLog` only defines `exportContextGetter`, so the key is never attached at runtime. The worker's `EvaluateAlphaEarthTerrainCost` node fails closed (`alphaEarthData` stays null) and the behavior tree falls through to plain flanking. The interface is documented here as declared; the feed is currently dead.
 - Flow control: `workerPending` boolean — one frame in flight; `sendStateToWorker` returns early while set; cleared only by the render-payload reply (typed `TRACK_LOST` / `DIAGNOSTICS` replies return before clearing it).
 
@@ -84,7 +84,7 @@ Mesh routing (`TrackManager.animateTracks`): EMCON-predicate rows → `emconMesh
 
 - `centroids`: `[{ id, count, radius, childIds }]` — drives `isHiddenByCentroid` suppression of member tracks and one-shot `[SWARM-CENTROID]` CRITICAL ops-log entries
 - `emcon`: `[{ id ('CENTROID-<n>' | 'SW-<n>'), numericId, radius, confidence, x, y }]` — drives one-shot `[EW ALERT]` WARNING entries and id resolution for EMCON rows
-- `ghosts`: `[{ id ('GHOST-<n>'), numericId (negative), x, y, confidence }]`
+- `ghosts`: `[{ id ('GHOST-<n>'), numericId (negative), profileId (RF family id or null), x, y, confidence }]`
 
 `intents`: flat `Float32Array`, stride 4 `[id, vx, vy, vz]` (`vz` always 0.0), one row per hostile; applied by `TrackManager.applyOpforIntents` as `desiredOpforVector` on hostile swarm boids.
 
@@ -108,7 +108,7 @@ Outbound:
 - `{ type: 'DIAGNOSTICS', pheromoneCells, emconStates, ghostCount, centroidCount, hostiles, friendlies, ewZones }` — cached on the main thread as `trackManager.latestWorkerDiagnostics`.
 - The per-frame render payload of §2.
 
-EMCON/ghost constants (worker): confidence decay `0.01/s`; `MAX_VELOCITY 5.0` (centroid/single ghost-radius expansion `2.5 units/s` plus bank-angle shape warp; UUV ghost radius instead grows `0.5 + 0.001 × distance traveled`). Decoy ghosts: 1–3 spawned per `decoyBurstCount` increment while `decoyActive`; confidence 0.2–0.49 (always < 0.5, i.e. below the 0.6 designation gate); lifetime 6–12 s; all removed when the decoy sim stops.
+EMCON/ghost constants (worker): confidence decay `0.01/s`; `MAX_VELOCITY 5.0` (centroid/single ghost-radius expansion `2.5 units/s` plus bank-angle shape warp; UUV ghost radius instead grows `0.5 + 0.001 × distance traveled`). Decoy ghosts: 1–3 spawned per `decoyBurstCount` increment while `decoyActive` **and the active family's spoof window is open** (`(elapsed since decoyActive) % (onMs + offMs) < onMs`; `onMs <= 0` or `offMs <= 0` → always open; bursts landing in an OFF phase are suppressed, not deferred). Family behavior comes from `decoyGhostProfile` (sanitized worker-side; defaults: confidence 0.2–0.49, lifetime 6–12 s, speed 12) and each ghost carries `profileId` from `decoyProfileId`. Confidence is hard-clamped at `GHOST_CONFIDENCE_CEILING = 0.499` — profiles cannot raise ghosts above the 0.5 zero-trust line (claim C-013 invariant). All ghosts are removed when the decoy sim stops; `RESET_STATE` restores the default family.
 
 ## 4. Replay Snapshot Schema (ICD-003)
 
@@ -125,7 +125,7 @@ From `src/core/ReplayCapture.js` and `trackSchema.js`.
   - `opsLogDelta` — ops-log entries unseen by prior snapshots
   - `recommendedAction { active, type ('V-JEPA' | null), counterfactualBound }`
   - `counterfactualState { active, x, y, radius }`
-  - `uiState { selectedTrackId, reconMode, destinationMode, pendingDesignation, pendingDesignationStage, undoDesignation { trackId, details, mgrs }, confirmVisible, undoVisible, vjepaHoverActive }`
+  - `uiState { selectedTrackId, trainingPreset (armed instructor preset id or null), reconMode, destinationMode, pendingDesignation, pendingDesignationStage, undoDesignation { trackId, details, mgrs }, confirmVisible, undoVisible, vjepaHoverActive }`
   - `designationQueue` — pending/undo entries from `TrackManager.getDesignationQueueSnapshot`
   - `triggerEvent` — `null` for ring snapshots, event name for event snapshots
 - Session envelope (`serializeSession`): `{ version, sessionId (crypto.randomUUID), startTimestamp, ringBuffer, eventSnapshots }`.
@@ -157,7 +157,7 @@ All 26 methods currently defined (methods marked * were added in the 2026-07-03 
 | `importReplaySession(sessionJson)`* | accepts string or object; runs `ReplayCapture.importSession`; returns resulting buffer lengths |
 | `getReplaySnapshot(index = 0, source = 'ring')`* | clone of the ring (`'ring'`) or event (`'event'`) snapshot at index, or null |
 | `setEwZone(x, y, radius)`* | posts `SET_EW_ZONES` with a single zone; returns the zone |
-| `injectGhostTracks(count)`* | seeds store `decoySim` (running, `count` decoys, `burstCount + 1`) and forces one worker frame, temporarily bypassing `workerPending`; returns true |
+| `injectGhostTracks(count, profileId?)`* | seeds store `decoySim` (running, `count` decoys, `burstCount + 1`; optional RF family id attaches that profile's `ghost` block) and forces one worker frame, temporarily bypassing `workerPending`; returns true |
 | `canDesignate(trackId)`* | `DOMController.canInitiateStrike` (confidence ≥ 0.6 or recon override; failure side effect: strike-abort warning + log) |
 | `getTrackConfidence(trackId)`* | `TrackManager.getTrackConfidenceScore` — live worker confidence when present, else provenance label score (HIGH 0.9 / MEDIUM 0.7 / LOW 0.35) |
 | `setUuvDepthOverride(depth)`* | pins UUV `z` (the dive cycle is wall-clock driven); non-finite clears; returns the applied value |

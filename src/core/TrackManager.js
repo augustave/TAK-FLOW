@@ -308,7 +308,9 @@ export class TrackManager {
         const msgPayload = {
             buffer: buffer.buffer,
             decoyActive: Boolean(decoyState.running),
-            decoyBurstCount: Number(decoyState.burstCount) || 0
+            decoyBurstCount: Number(decoyState.burstCount) || 0,
+            decoyProfileId: decoyState.profileId || null,
+            decoyGhostProfile: decoyState.ghost || null
         };
 
         const transferrables = [buffer.buffer];

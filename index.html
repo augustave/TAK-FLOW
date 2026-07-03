@@ -476,7 +476,7 @@
         <div class="panel" style="flex: 0 0 auto;" id="instructor-panel">
             <div class="panel-header">
                 <span class="panel-title">SCENARIO OPS [INSTRUCTOR]</span>
-                <span class="panel-badge badge-warning">OFFLINE</span>
+                <span class="panel-badge badge-warning" id="instructor-badge">OFFLINE</span>
             </div>
             <div class="panel-body">
                 <div class="data-row">
@@ -490,6 +490,13 @@
                 <div class="hud-controls-row" style="margin-top: 6px;">
                     <button id="btn-scenario-load" class="hud-btn" style="color: var(--amber-alert); border-color: var(--amber-alert);">LOAD SCENARIO</button>
                     <button id="btn-scenario-clear" class="hud-btn">CLEAR</button>
+                </div>
+                <div class="data-row" style="margin-top: 8px;">
+                    <span class="data-label">TRAINING PRESET</span>
+                    <select id="training-preset-select" class="sim-select"></select>
+                </div>
+                <div class="hud-controls-row" style="margin-top: 6px;">
+                    <button id="btn-preset-arm" class="hud-btn" style="color: var(--amber-alert); border-color: var(--amber-alert);">ARM PRESET</button>
                 </div>
             </div>
         </div>

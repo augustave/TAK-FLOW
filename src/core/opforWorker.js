@@ -193,6 +193,47 @@ let nextGhostId = -1;
 let lastDecoyBurstCount = 0;
 let lastCentroidCount = 0;
 
+// RF ghost-track profile: worker-side family behavior for SIGINT decoys.
+// Confidence is hard-clamped below 0.5 regardless of profile input — the
+// zero-trust designation isolation (claim C-013) is an invariant, not a knob.
+const GHOST_CONFIDENCE_CEILING = 0.499;
+const DEFAULT_GHOST_PROFILE = Object.freeze({
+    confidenceRange: Object.freeze([0.2, 0.49]),
+    lifetimeMs: Object.freeze([6000, 12000]),
+    speed: 12.0,
+    spoofWindow: Object.freeze({ onMs: 4000, offMs: 0 })
+});
+let activeGhostProfile = { ...DEFAULT_GHOST_PROFILE };
+let activeGhostProfileId = null;
+let decoyActiveSince = 0;
+
+function sanitizeGhostProfile(raw) {
+    if (!raw || typeof raw !== 'object') return { ...DEFAULT_GHOST_PROFILE };
+    const range = Array.isArray(raw.confidenceRange) ? raw.confidenceRange : DEFAULT_GHOST_PROFILE.confidenceRange;
+    const lifetime = Array.isArray(raw.lifetimeMs) ? raw.lifetimeMs : DEFAULT_GHOST_PROFILE.lifetimeMs;
+    const window = raw.spoofWindow && typeof raw.spoofWindow === 'object' ? raw.spoofWindow : DEFAULT_GHOST_PROFILE.spoofWindow;
+    const cMin = clamp(Number(range[0]) || 0.2, 0.01, GHOST_CONFIDENCE_CEILING);
+    const cMax = clamp(Number(range[1]) || 0.49, cMin, GHOST_CONFIDENCE_CEILING);
+    const lMin = Math.max(500, Number(lifetime[0]) || 6000);
+    const lMax = Math.max(lMin, Number(lifetime[1]) || 12000);
+    return {
+        confidenceRange: [cMin, cMax],
+        lifetimeMs: [lMin, lMax],
+        speed: clamp(Number(raw.speed) || DEFAULT_GHOST_PROFILE.speed, 0.5, 40.0),
+        spoofWindow: {
+            onMs: Math.max(0, Number(window.onMs) || 0),
+            offMs: Math.max(0, Number(window.offMs) || 0)
+        }
+    };
+}
+
+function isSpoofWindowOpen(now) {
+    const { onMs, offMs } = activeGhostProfile.spoofWindow;
+    if (offMs <= 0 || onMs <= 0) return true; // degenerate window: always emitting
+    const elapsed = Math.max(0, now - decoyActiveSince);
+    return (elapsed % (onMs + offMs)) < onMs;
+}
+
 // Phase 16: Pheromone Data Layer
 const pheromoneGrid = new Map(); // "x,y" -> level
 const PHEROMONE_DECAY_RATE = 0.005;
@@ -283,17 +324,23 @@ function appendRenderRow(rows, id, entityType, x, y, z, yaw, speed, radius, coun
 }
 
 function updateGhostTracks(decoyActive, decoyBurstCount, now) {
-    if (decoyActive && decoyBurstCount > lastDecoyBurstCount) {
+    if (decoyActive && !decoyActiveSince) decoyActiveSince = now;
+    if (!decoyActive) decoyActiveSince = 0;
+
+    if (decoyActive && decoyBurstCount > lastDecoyBurstCount && isSpoofWindowOpen(now)) {
+        const [cMin, cMax] = activeGhostProfile.confidenceRange;
+        const [lMin, lMax] = activeGhostProfile.lifetimeMs;
         const spawnCount = clamp(decoyBurstCount - lastDecoyBurstCount, 1, 3);
         for (let i = 0; i < spawnCount; i++) {
             const ghostId = nextGhostId--;
             ghostTracks.set(ghostId, {
                 id: ghostId,
+                profileId: activeGhostProfileId,
                 x: (Math.random() - 0.5) * 60.0,
                 y: (Math.random() - 0.5) * 60.0,
                 yaw: Math.random() * Math.PI * 2.0,
-                confidence: 0.2 + (Math.random() * 0.29), // always < 0.5
-                expiresAt: now + 6000 + (Math.random() * 6000)
+                confidence: Math.min(GHOST_CONFIDENCE_CEILING, cMin + Math.random() * (cMax - cMin)),
+                expiresAt: now + lMin + (Math.random() * (lMax - lMin))
             });
         }
     }
@@ -308,8 +355,8 @@ function updateGhostTracks(decoyActive, decoyBurstCount, now) {
         }
 
         if (!ghost.vx) {
-            ghost.vx = Math.cos(ghost.yaw) * 12.0;
-            ghost.vy = Math.sin(ghost.yaw) * 12.0;
+            ghost.vx = Math.cos(ghost.yaw) * activeGhostProfile.speed;
+            ghost.vy = Math.sin(ghost.yaw) * activeGhostProfile.speed;
         }
         if (Math.random() < 0.05 || !ghost.targetYaw) ghost.targetYaw = Math.random() * Math.PI * 2.0;
         
@@ -369,6 +416,9 @@ self.onmessage = function(e) {
         forcedConfidenceById.clear();
         pheromoneGrid.clear();
         lastDecoyBurstCount = 0;
+        activeGhostProfile = { ...DEFAULT_GHOST_PROFILE };
+        activeGhostProfileId = null;
+        decoyActiveSince = 0;
         resetEwZones();
         return;
     }
@@ -384,6 +434,8 @@ self.onmessage = function(e) {
     const rawData = new Float32Array(dataBuffer);
     const decoyActive = Boolean(payload.decoyActive);
     const decoyBurstCount = Number(payload.decoyBurstCount) || 0;
+    activeGhostProfile = sanitizeGhostProfile(payload.decoyGhostProfile);
+    activeGhostProfileId = typeof payload.decoyProfileId === 'string' ? payload.decoyProfileId : null;
     
     if (payload.alphaEarthBuffer) {
         tacticalState.alphaEarthData = new Float32Array(payload.alphaEarthBuffer);
@@ -813,6 +865,7 @@ self.onmessage = function(e) {
         ghostUiTracks.push({
             id: ghostTrackId,
             numericId: ghost.id,
+            profileId: ghost.profileId || null,
             x: ghost.x,
             y: ghost.y,
             confidence: renderConfidence
