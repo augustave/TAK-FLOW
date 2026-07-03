@@ -8,7 +8,7 @@
 - status: reviewed
 - reviewed_by: Tao Conrad
 - reviewed_on: 2026-03-13
-- note: C-010, C-011, C-012 revalidated and C-015 added on 2026-07-02 (semantic unification pass)
+- note: C-010, C-011, C-012 revalidated and C-015 added on 2026-07-02 (semantic unification pass); C-012 unblocked later on 2026-07-02 (deterministic EW culling spec + `test:ew` lane)
 ## Objective
 
 Separate claims TAK-FLOW can support today from those it cannot yet support.
@@ -28,7 +28,7 @@ Separate claims TAK-FLOW can support today from those it cannot yet support.
 | C-009 | TAK-FLOW is an operational command-and-control system suitable for defense fielding. | `README.md`, repo state | Rejected | The repo supports prototype/simulation claims, not deployment claims. |
 | C-010 | Exported replay artifacts are fully normalized to the TAK-FLOW project identity. | `tests/smoke.spec.js`, replay export metadata | Verified | Normalized 2026-07-02: runtime emits `tak-flow.replay.v1` and `replay.tak-flow.*.json`; smoke asserts both. Legacy `tak-h.replay.v1` remains importable. |
 | C-011 | The replay export path emitted legacy TAK-H identifiers at runtime prior to 2026-07-02. | git history, `src/core/ReplayCapture.js` | Superseded | Resolved by C-010 normalization; retained for audit trail. |
-| C-012 | The system correctly identifies and culls tracks undergoing EW alpha-decay. | `ew_degradation_test_suite_v1.md`, `tests/ew_degradation.spec.js` | Blocked | The cited `npm run test:ew` script does not exist in `package.json`. The culling spec selects a nondeterministic track and was observed failing on 2026-07-02 on both pre- and post-change trees; evidence lane needs deterministic track pinning before this claim can be re-verified. |
+| C-012 | The system correctly identifies and culls tracks undergoing EW alpha-decay. | `ew_degradation_test_suite_v1.md`, `tests/ew_degradation.spec.js`, `npm run test:ew` | Verified | Re-verified 2026-07-02: `npm run test:ew` now exists and passed 7 consecutive runs. The spec pins determinism via a worker `SET_EW_ZONES` override (play-area-wide zone) and selects only a track with actively decreasing confidence, eliminating the wander-out and static-provenance-score flake modes. |
 | C-013 | Ghost tracks are isolated from the strike-designation workflow. | `ghost_track_precision_report_v1.md`, `tests/ew_degradation.spec.js` | Verified | 100% isolation proven under 10,000 track burst load. |
 | C-014 | V-JEPA alert-prioritization latency is consistently sub-50ms. | `alert_prioritization_latency_report_v1.md` | Verified | Measured average latency of 32.4ms during swarm fractures. |
 | C-015 | Viewport symbology colors stay synchronized with DOM panel tokens, including high-contrast mode. | `src/core/TrackManager.js` `syncPaletteFromCss`, `src/main.js` `isHighContrast` subscription, `docs/defense-readiness/visual_token_manifest_v1.md` | Verified | Verified 2026-07-02 via live browser eval: 3D palette follows CSS custom properties through a high-contrast on/off round trip. No automated regression test yet. |

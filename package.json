@@ -12,6 +12,7 @@
     "check": "npm run check:worker && npm run check:bundle",
     "test": "npm run check",
     "smoke": "playwright test",
+    "test:ew": "playwright test tests/ew_degradation.spec.js",
     "ci:verify": "npm run build && npm test && npm run smoke"
   },
   "dependencies": {

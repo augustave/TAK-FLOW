@@ -176,7 +176,8 @@ const tacticalState = {
     alphaEarthData: null
 };
 
-const EW_ZONES = [ { x: 0, y: 0, radius: 10.0 } ];
+const DEFAULT_EW_ZONES = [ { x: 0, y: 0, radius: 10.0 } ];
+const EW_ZONES = DEFAULT_EW_ZONES.map(z => ({ ...z }));
 const emconState = new Map(); // idStr -> { lastX, lastY, entryTime }
 const MAX_VELOCITY = 5.0; // units/sec
 const EMCON_CONFIDENCE_DECAY_PER_SEC = 0.01;
@@ -218,6 +219,19 @@ function maybeEmitTrackLost(trackId) {
     if (lostTrackNotified.has(trackId)) return;
     lostTrackNotified.add(trackId);
     self.postMessage({ type: 'TRACK_LOST', id: trackId });
+}
+
+function setEwZones(zones) {
+    const sanitized = (Array.isArray(zones) ? zones : [])
+        .map(z => ({ x: Number(z && z.x), y: Number(z && z.y), radius: Number(z && z.radius) }))
+        .filter(z => Number.isFinite(z.x) && Number.isFinite(z.y) && Number.isFinite(z.radius) && z.radius > 0);
+    EW_ZONES.length = 0;
+    EW_ZONES.push(...sanitized);
+}
+
+function resetEwZones() {
+    EW_ZONES.length = 0;
+    EW_ZONES.push(...DEFAULT_EW_ZONES.map(z => ({ ...z })));
 }
 
 function normalizeForcedTrackId(rawId) {
@@ -326,6 +340,11 @@ self.onmessage = function(e) {
         return;
     }
 
+    if (payload.type === 'SET_EW_ZONES') {
+        setEwZones(payload.zones);
+        return;
+    }
+
     if (payload.type === 'RESET_STATE') {
         emconState.clear();
         lostTrackNotified.clear();
@@ -333,6 +352,7 @@ self.onmessage = function(e) {
         forcedConfidenceById.clear();
         pheromoneGrid.clear();
         lastDecoyBurstCount = 0;
+        resetEwZones();
         return;
     }
     
