@@ -55,6 +55,8 @@ export class TrackManager {
         this.ghostMetaByNumericId = new Map();
         this.liveTrackStateById = new Map();
         this.trackLossLogs = new Set();
+        this.latestWorkerDiagnostics = null;
+        this.testUuvDepthOverride = null; // e2e-only: pins UUV depth (dive cycle is wall-clock driven)
 
         // Phase 12 Dynamical System Validation Harness
         this.swarmTelemetry = {
@@ -125,6 +127,10 @@ export class TrackManager {
             const payload = e.data || {};
             if (payload.type === 'TRACK_LOST') {
                 this.handleTrackLost(payload.id);
+                return;
+            }
+            if (payload.type === 'DIAGNOSTICS') {
+                this.latestWorkerDiagnostics = payload;
                 return;
             }
 
@@ -1416,8 +1422,9 @@ export class TrackManager {
                 
                 // Depth oscillation between 0 and -30
                 tr.z = Math.sin(Date.now() / 20000 + tr.offset) * 30.0;
-                if (tr.z > 0) tr.z = 0; 
+                if (tr.z > 0) tr.z = 0;
                 if (tr.t.threat_level === 'HIGH' && tr.t.time_to_event_seconds < 120) tr.z = -20;
+                if (this.testUuvDepthOverride !== null) tr.z = this.testUuvDepthOverride;
                 
                 // Ocean Current Drift
                 const driftX = Math.sin(tr.pos.y * 0.05 + Date.now()/10000) * 0.5;

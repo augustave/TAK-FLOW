@@ -4,14 +4,12 @@ async function setupEwTestApi(page) {
   await page.goto('/?e2e=1');
   await page.waitForFunction(() => Boolean(window.__TAK_FLOW_TEST__));
   
-  // Extend the test API for EW scenarios
+  // injectGhostTracks / setEwZone / canDesignate / getTrackConfidence are
+  // built into __TAK_FLOW_TEST__; only the ghost-merging listTracks view is
+  // still a test-time extension.
   await page.evaluate(() => {
     const api = window.__TAK_FLOW_TEST__;
-    
-    // Internal access to systems
     const trackManager = window.opsLogInstance.exportContextGetter().trackManager;
-    const store = window.opsLogInstance.exportContextGetter().store;
-    const domController = window.opsLogInstance.exportContextGetter().domController;
 
     const originalListTracks = api.listTracks;
     api.listTracks = () => {
@@ -29,36 +27,6 @@ async function setupEwTestApi(page) {
           }
       }
       return tracks;
-    };
-
-    api.injectGhostTracks = (count) => {
-      let simState = store.get('decoySim') || { running: false, activeDecoys: [], burstCount: 0 };
-      
-      store.set('decoySim', {
-        running: true,
-        activeDecoys: new Array(count).fill({ ssid: 'MOCK-GHOST', mac: '00:00:00', channel: '01' }),
-        burstCount: simState.burstCount + 1
-      });
-      // Force immediate sync to worker, bypassing pending if needed
-      const wasPending = trackManager.workerPending;
-      trackManager.workerPending = false;
-      trackManager.sendStateToWorker();
-      trackManager.workerPending = wasPending;
-      return true;
-    };
-
-    api.setEwZone = (x, y, radius) => {
-      const zone = { x, y, radius };
-      trackManager.opforWorker.postMessage({ type: 'SET_EW_ZONES', zones: [zone] });
-      return zone;
-    };
-
-    api.getTrackConfidence = (trackId) => {
-      return trackManager.getTrackConfidenceScore(trackId);
-    };
-
-    api.canDesignate = (trackId) => {
-        return domController.canInitiateStrike(trackId);
     };
   });
 }

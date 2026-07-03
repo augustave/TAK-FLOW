@@ -180,6 +180,66 @@ if (isE2EMode) {
             const snapshot = list[index];
             return snapshot ? structuredClone(snapshot) : null;
         },
+        setEwZone(x, y, radius) {
+            const zone = { x, y, radius };
+            trackManager.opforWorker.postMessage({ type: 'SET_EW_ZONES', zones: [zone] });
+            return zone;
+        },
+        injectGhostTracks(count) {
+            const simState = store.get('decoySim') || { running: false, activeDecoys: [], burstCount: 0 };
+            store.set('decoySim', {
+                running: true,
+                activeDecoys: new Array(count).fill({ ssid: 'MOCK-GHOST', mac: '00:00:00', channel: '01' }),
+                burstCount: (simState.burstCount || 0) + 1
+            });
+            const wasPending = trackManager.workerPending;
+            trackManager.workerPending = false;
+            trackManager.sendStateToWorker();
+            trackManager.workerPending = wasPending;
+            return true;
+        },
+        canDesignate(trackId) {
+            return domController.canInitiateStrike(trackId);
+        },
+        getTrackConfidence(trackId) {
+            return trackManager.getTrackConfidenceScore(trackId);
+        },
+        setUuvDepthOverride(depth) {
+            trackManager.testUuvDepthOverride = Number.isFinite(depth) ? depth : null;
+            return trackManager.testUuvDepthOverride;
+        },
+        requestWorkerDiagnostics() {
+            trackManager.latestWorkerDiagnostics = null;
+            trackManager.opforWorker.postMessage({ type: 'DIAGNOSTICS' });
+            return true;
+        },
+        getWorkerDiagnostics() {
+            return trackManager.latestWorkerDiagnostics
+                ? structuredClone(trackManager.latestWorkerDiagnostics)
+                : null;
+        },
+        getPaletteState() {
+            const styles = getComputedStyle(document.body);
+            const token = (name) => styles.getPropertyValue(name).trim();
+            const mesh3d = (type) => `#${trackManager.typeColors[type].getHexString()}`;
+            return {
+                isHighContrast: Boolean(store.get('isHighContrast')),
+                tokens: {
+                    redForce: token('--red-force'),
+                    blueForce: token('--blue-force'),
+                    yellowUnknown: token('--yellow-unknown')
+                },
+                palette: {
+                    hostile: mesh3d('hostile'),
+                    friendly: mesh3d('friendly'),
+                    unknown: mesh3d('unknown')
+                }
+            };
+        },
+        setHighContrast(active) {
+            store.set('isHighContrast', Boolean(active));
+            return store.get('isHighContrast');
+        },
         getUiState() {
             return {
                 selectedTrackId: store.get('selectedTrackId'),

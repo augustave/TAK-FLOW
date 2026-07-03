@@ -10,11 +10,6 @@ async function setupScenarioApi(page) {
     const api = window.__TAK_FLOW_TEST__;
     const trackManager = window.opsLogInstance.exportContextGetter().trackManager;
 
-    api.setEwZoneForScenario = (x, y, radius) => {
-      trackManager.opforWorker.postMessage({ type: 'SET_EW_ZONES', zones: [{ x, y, radius }] });
-      return true;
-    };
-
     api.findLiveSingle = () => {
       for (const [id, state] of trackManager.liveTrackStateById.entries()) {
         if (id.startsWith('SW-') && state.entityType === 5) {
@@ -50,7 +45,7 @@ test.describe('TAK-FLOW scenario controls', () => {
     expect(baselineCount).toBeGreaterThan(800); // default MASSED SWARM profile (~1510)
 
     // Prove the worker is decaying under a play-area-wide EW zone before reset.
-    await page.evaluate(() => window.__TAK_FLOW_TEST__.setEwZoneForScenario(0, 0, 1000));
+    await page.evaluate(() => window.__TAK_FLOW_TEST__.setEwZone(0, 0, 1000));
     await expect.poll(async () => page.evaluate(() => {
       const min = window.__TAK_FLOW_TEST__.minSingleConfidence();
       return min === null ? 1 : min;

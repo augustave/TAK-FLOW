@@ -191,6 +191,7 @@ const FORCED_CONFIDENCE_TTL_MS = 180000;
 const ghostTracks = new Map(); // numericId -> { id, x, y, yaw, confidence, expiresAt }
 let nextGhostId = -1;
 let lastDecoyBurstCount = 0;
+let lastCentroidCount = 0;
 
 // Phase 16: Pheromone Data Layer
 const pheromoneGrid = new Map(); // "x,y" -> level
@@ -344,6 +345,20 @@ self.onmessage = function(e) {
 
     if (payload.type === 'SET_EW_ZONES') {
         setEwZones(payload.zones);
+        return;
+    }
+
+    if (payload.type === 'DIAGNOSTICS') {
+        self.postMessage({
+            type: 'DIAGNOSTICS',
+            pheromoneCells: pheromoneGrid.size,
+            emconStates: emconState.size,
+            ghostCount: ghostTracks.size,
+            centroidCount: lastCentroidCount,
+            hostiles: tacticalState.hostiles.length,
+            friendlies: tacticalState.friendlies.length,
+            ewZones: EW_ZONES.map(z => ({ ...z }))
+        });
         return;
     }
 
@@ -588,6 +603,8 @@ self.onmessage = function(e) {
             }
         }
     }
+
+    lastCentroidCount = centroids.length;
 
     // 3. Output Render Buffer Schema (see trackSchema.js)
     const STRIDE = RENDER_ROW_STRIDE;
