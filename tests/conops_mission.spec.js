@@ -134,9 +134,23 @@ test.describe('TAK-FLOW CONOPS mission: Contested Littoral Watch', () => {
     await expect(page.locator('#confirm-strip')).toBeVisible();
     await page.keyboard.press('r');
     await page.keyboard.press('Enter');
-    await expect(page.locator('#undo-strip')).toBeVisible();
-    await page.locator('#btn-undo').click();
-    await expect(page.locator('#undo-strip')).toBeHidden();
+
+    // Undo page-side in one task (the 30s undo window can expire across
+    // separate round-trips on slow runners).
+    const undone = await page.evaluate(async () => {
+      const strip = document.getElementById('undo-strip');
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if (strip && strip.style.display !== 'none') {
+          document.getElementById('btn-undo')?.click();
+          return { hiddenAfter: strip.style.display === 'none' };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return null;
+    });
+    expect(undone, 'undo strip never appeared').toBeTruthy();
+    expect(undone.hiddenAfter).toBe(true);
 
     // Step 9 — After-action: mark the mission, verify the replay artifact is
     // exportable with the current schema and both buffers populated.

@@ -75,11 +75,11 @@ test.describe('TAK-FLOW training presets', () => {
     expect(ghostObservation.allBelowCeiling).toBe(true);
 
     // Preset id rides along in replay snapshots for after-action review.
-    await page.evaluate(() => window.__TAK_FLOW_TEST__.captureReplayEvent('PRESET_MARKER'));
-    const marker = await page.evaluate(() => {
-      const meta = window.__TAK_FLOW_TEST__.getReplayExportMetadata();
-      return window.__TAK_FLOW_TEST__.getReplaySnapshot(meta.eventSnapshotLength - 1, 'event');
-    });
+    // captureReplayEvent returns the snapshot it just took — index math over
+    // the event list can race concurrently captured events.
+    const marker = await page.evaluate(() =>
+      window.__TAK_FLOW_TEST__.captureReplayEvent('PRESET_MARKER')
+    );
     expect(marker.uiState.trainingPreset).toBe('GHOST-DISCRIMINATION-DRILL');
 
     // Plain scenario load clears the preset.

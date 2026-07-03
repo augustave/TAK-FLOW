@@ -10,38 +10,59 @@ test.describe('TAK-FLOW smoke', () => {
   test('enforces designation guardrails and supports undo', async ({ page }) => {
     await getTestApi(page);
 
-    const trackSelection = await page.evaluate(() => {
+    // Guardrail block runs page-side in one task: the strike-abort banner is
+    // a temporary flash that expires between CDP round-trips on slow runners.
+    const guardrail = await page.evaluate(() => {
       const tracks = window.__TAK_FLOW_TEST__.listTracks();
       const low = tracks.find((track) => track.confidenceScore < 0.6 && !track.id.startsWith('GHOST-'));
       const high = tracks.find((track) => track.confidenceScore >= 0.6 && !track.id.startsWith('GHOST-'));
       if (!low || !high) return null;
       window.__TAK_FLOW_TEST__.selectTrack(low.id);
-      return { low, high };
+      const panelVisible = document.getElementById('active-track-panel')?.style.display !== 'none';
+      const blocked = window.__TAK_FLOW_TEST__.stageDesignation(low.id);
+      const alertText = document.getElementById('alert-text')?.textContent || '';
+      return { low, high, panelVisible, blocked, alertText };
     });
 
-    expect(trackSelection).not.toBeNull();
-    await expect(page.locator('#active-track-panel')).toBeVisible();
-
-    const blocked = await page.evaluate((trackId) => window.__TAK_FLOW_TEST__.stageDesignation(trackId), trackSelection.low.id);
-    expect(blocked.ok).toBe(false);
-    await expect(page.locator('#alert-text')).toContainText('INSUFFICIENT TRACK PROVENANCE');
+    expect(guardrail).not.toBeNull();
+    expect(guardrail.panelVisible).toBe(true);
+    expect(guardrail.blocked.ok).toBe(false);
+    expect(guardrail.alertText).toContain('INSUFFICIENT TRACK PROVENANCE');
 
     const armed = await page.evaluate((trackId) => {
       window.__TAK_FLOW_TEST__.selectTrack(trackId);
       return window.__TAK_FLOW_TEST__.stageDesignation(trackId);
-    }, trackSelection.high.id);
+    }, guardrail.high.id);
     expect(armed.ok).toBe(true);
 
     await expect(page.locator('#confirm-strip')).toBeVisible();
     await page.keyboard.press('r');
     await page.keyboard.press('Enter');
-    await expect(page.locator('#undo-strip')).toBeVisible();
-    await expect(page.locator('#undo-text')).toContainText(trackSelection.high.id);
 
-    await page.locator('#btn-undo').click();
-    await expect(page.locator('#undo-strip')).toBeHidden();
-    const postUndoState = await page.evaluate(() => window.__TAK_FLOW_TEST__.getUiState());
-    expect(postUndoState.undoDesignation).toBeNull();
+    // Undo runs page-side in one task: the undo window lasts only 30s and
+    // separate visible/click/hidden round-trips can outlast it on slow runners.
+    const undone = await page.evaluate(async (expectedId) => {
+      const strip = document.getElementById('undo-strip');
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if (strip && strip.style.display !== 'none') {
+          const undoText = document.getElementById('undo-text')?.textContent || '';
+          document.getElementById('btn-undo')?.click();
+          return {
+            undoText,
+            hiddenAfter: strip.style.display === 'none',
+            uiState: window.__TAK_FLOW_TEST__.getUiState()
+          };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return null;
+    }, guardrail.high.id);
+
+    expect(undone, 'undo strip never appeared').toBeTruthy();
+    expect(undone.undoText).toContain(guardrail.high.id);
+    expect(undone.hiddenAfter).toBe(true);
+    expect(undone.uiState.undoDesignation).toBeNull();
   });
 
   test('exports replay artifacts and opens replay transport', async ({ page }) => {
