@@ -67,7 +67,7 @@ test.describe('TAK-FLOW smoke', () => {
 
     const replayPayload = await page.evaluate(() => window.__TAK_FLOW_TEST__.getReplayExportMetadata());
 
-    expect(replayPayload.version).toBe('tak-flow.replay.v1');
+    expect(replayPayload.version).toBe('tak-flow.replay.v2');
     expect(replayPayload.ringBufferLength).toBeGreaterThan(0);
     expect(replayPayload.eventSnapshotLength).toBeGreaterThan(0);
   });

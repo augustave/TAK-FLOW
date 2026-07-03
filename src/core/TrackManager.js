@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { trackData, sources, confidences, loadScenario } from '../data/mockData.js';
 import { store } from './Store.js';
+import { ENTITY_TYPE, RENDER_ROW_STRIDE, isEmconType, isCentroidType } from './trackSchema.js';
 
 export class TrackManager {
     constructor(overlayGroup) {
@@ -893,12 +894,12 @@ export class TrackManager {
                 vz: velocity.vz,
                 confidence,
                 domain: track.type,
-                emconState: Boolean(live && (live.entityType === 2 || live.entityType === 4)),
+                emconState: Boolean(live && isEmconType(live.entityType)),
                 isSigint: false,
                 rfProfile: null,
                 entityType: live?.entityType ?? 0,
                 radius: live?.radius ?? 0,
-                count: 1,
+                count: Math.max(1, Math.round(live?.count ?? 1)),
                 subtype: track.subtype
             });
             seen.add(track.id);
@@ -918,12 +919,12 @@ export class TrackManager {
                 vz: 0,
                 confidence: live.confidence,
                 domain: String(id).startsWith('CENTROID-') ? 'centroid' : 'synthetic',
-                emconState: Boolean(emcon || live.entityType === 2 || live.entityType === 4),
+                emconState: Boolean(emcon || isEmconType(live.entityType)),
                 isSigint: Boolean(ghost || String(id).startsWith('GHOST-')),
                 rfProfile: ghost?.rfProfile || null,
                 entityType: live.entityType,
                 radius: live.radius || emcon?.radius || 0,
-                count: String(id).startsWith('CENTROID-') ? Math.max(1, Math.round((live.radius || 1) * 2)) : 1,
+                count: Math.max(1, Math.round(live.count ?? 1)),
                 subtype: String(id).startsWith('GHOST-') ? 'SIGINT GHOST' : 'EMCON TRACK'
             });
         });
@@ -973,6 +974,7 @@ export class TrackManager {
                 z: entry.z,
                 speed: Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
                 radius: entry.radius || 0,
+                count: entry.count || 1,
                 confidence: entry.confidence,
                 entityType: entry.entityType || 0,
                 rfProfile: entry.rfProfile || null
@@ -1660,7 +1662,7 @@ export class TrackManager {
             if (this.uuvMesh) this.uuvMesh.material.opacity = 0.9 * (1 - skinVal);
             
             const buffer = this.latestRenderingBuffer;
-            const STRIDE = 10;
+            const STRIDE = RENDER_ROW_STRIDE;
             const color = new THREE.Color();
             
             this.hostileIdMap = {};
@@ -1677,20 +1679,21 @@ export class TrackManager {
                 const yaw = buffer[i+5];
                 const speed = buffer[i+6];
                 const radius = buffer[i+7];
+                const count = buffer[i+8];
                 const threat = THREE.MathUtils.clamp(buffer[i+9], 0, 1);
 
                 dummy.position.set(x, y, 0.2);
                 dummy.rotation.set(0, 0, yaw);
-                
-                const isCentroid = entityType === 1.0;
-                const isEmcon = entityType === 2.0;
-                const isUUV_Surfaced = entityType === 3.0;
-                const isUUV_Submerged = entityType === 4.0;
-                
+
+                const isCentroid = isCentroidType(entityType);
+                const isEmcon = isEmconType(entityType);
+                const isUUV_Surfaced = entityType === ENTITY_TYPE.UUV_SURFACED;
+                const isUUV_Submerged = entityType === ENTITY_TYPE.UUV_SUBMERGED;
+
                 let strId = `SW-${numericId}`;
                 if (isCentroid) {
                     strId = `CENTROID-${numericId}`;
-                } else if (isEmcon || isUUV_Submerged) {
+                } else if (isEmcon) {
                     const emconData = this.emconMetaByNumericId.get(numericId);
                     if (emconData) strId = emconData.realId || emconData.id || strId;
                 } else if (numericId < 0 && this.ghostMetaByNumericId.has(numericId)) {
@@ -1699,7 +1702,7 @@ export class TrackManager {
                     strId = this.numericTrackIdMap.get(numericId);
                 }
 
-                liveTrackState.set(strId, { x, y, speed, radius, confidence: threat, entityType });
+                liveTrackState.set(strId, { x, y, speed, radius, count, confidence: threat, entityType });
                 
                 const isSelected = strId === renderSelectedId;
                 const upfRole = this.getUpfTrackRole(strId);
@@ -1709,7 +1712,7 @@ export class TrackManager {
                 if (upfRole === 1) baseSc *= 1.24 + (((Math.sin(t * 9.0) + 1) * 0.5) * 0.16);
                 if (upfRole === 2) baseSc *= 0.82;
                 
-                if (isEmcon || isUUV_Submerged) {
+                if (isEmcon) {
                     this.emconIdMap[emconCount] = strId;
                     if (this.emconConfidenceAttr) this.emconConfidenceAttr.setX(emconCount, threat);
                     if (this.emconFocusAttr) this.emconFocusAttr.setX(emconCount, upfRole === 2 ? this.upfConfig.nonPrimaryOpacity : 1.0);

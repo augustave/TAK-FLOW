@@ -1,3 +1,5 @@
+import { ENTITY_TYPE, RENDER_ROW_STRIDE } from './trackSchema.js';
+
 // --- CORE BEHAVIOR TREE CLASSES ---
 class Node {
     evaluate(track, tacticalState) { return 'FAILURE'; }
@@ -587,8 +589,8 @@ self.onmessage = function(e) {
         }
     }
 
-    // 3. Output Render Buffer Schema (Stride = 10)
-    const STRIDE = 10;
+    // 3. Output Render Buffer Schema (see trackSchema.js)
+    const STRIDE = RENDER_ROW_STRIDE;
     const renderRows = [];
     const now = performance.now();
     const emconAlerts = [];
@@ -639,7 +641,7 @@ self.onmessage = function(e) {
             appendRenderRow(
                 renderRows,
                 c.id,
-                2.0,
+                ENTITY_TYPE.EMCON_CENTROID,
                 state.lastX,
                 state.lastY,
                 0.0,
@@ -664,7 +666,7 @@ self.onmessage = function(e) {
             appendRenderRow(
                 renderRows,
                 c.id,
-                1.0,
+                ENTITY_TYPE.SWARM_CENTROID,
                 c.x,
                 c.y,
                 0.0,
@@ -734,7 +736,7 @@ self.onmessage = function(e) {
                 appendRenderRow(
                     renderRows,
                     h.id,
-                    isUUV ? 4.0 : 2.0,
+                    isUUV ? ENTITY_TYPE.UUV_SUBMERGED : ENTITY_TYPE.EMCON_SINGLE,
                     state.lastX,
                     state.lastY,
                     0.0,
@@ -759,7 +761,7 @@ self.onmessage = function(e) {
                 appendRenderRow(
                     renderRows,
                     h.id,
-                    isUUV ? 3.0 : 1.0,
+                    isUUV ? ENTITY_TYPE.UUV_SURFACED : ENTITY_TYPE.HOSTILE_SINGLE,
                     h.x,
                     h.y,
                     h.z,
@@ -781,7 +783,7 @@ self.onmessage = function(e) {
         appendRenderRow(
             renderRows,
             ghost.id,
-            0.0,
+            ENTITY_TYPE.SIGINT_GHOST,
             ghost.x,
             ghost.y,
             0.0,

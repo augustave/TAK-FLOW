@@ -1,8 +1,11 @@
 import { store } from './Store.js';
+import { normalizeLegacyTrackState } from './trackSchema.js';
 
-export const SNAPSHOT_VERSION = 'tak-flow.replay.v1';
+export const SNAPSHOT_VERSION = 'tak-flow.replay.v2';
 // Older exports remain importable; new sessions always serialize as SNAPSHOT_VERSION.
-export const LEGACY_SNAPSHOT_VERSIONS = new Set(['tak-h.replay.v1']);
+// v1 sessions carry the ambiguous entityType codes (1.0 = centroid OR hostile single,
+// 2.0 = EMCON single OR EMCON centroid) and are normalized on import by id prefix.
+export const LEGACY_SNAPSHOT_VERSIONS = new Set(['tak-flow.replay.v1', 'tak-h.replay.v1']);
 const CAPTURE_INTERVAL_MS = 250;
 const MAX_RING_BUFFER = 14400;
 
@@ -193,6 +196,11 @@ export class ReplayCapture {
         }
         if (!Array.isArray(parsed.ringBuffer) || !Array.isArray(parsed.eventSnapshots)) {
             throw new Error('Replay import failed: missing replay buffers');
+        }
+
+        if (parsed.version !== SNAPSHOT_VERSION) {
+            for (const snapshot of parsed.ringBuffer) normalizeLegacyTrackState(snapshot?.trackState);
+            for (const snapshot of parsed.eventSnapshots) normalizeLegacyTrackState(snapshot?.trackState);
         }
 
         this.ringBuffer = parsed.ringBuffer;

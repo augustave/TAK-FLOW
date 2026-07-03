@@ -163,6 +163,23 @@ if (isE2EMode) {
                 eventSnapshotLength: payload.eventSnapshots.length
             };
         },
+        getLiveTrackState(trackId) {
+            const live = trackManager.liveTrackStateById.get(trackId);
+            return live ? structuredClone({ id: trackId, ...live }) : null;
+        },
+        importReplaySession(sessionJson) {
+            const json = typeof sessionJson === 'string' ? sessionJson : JSON.stringify(sessionJson);
+            replayCapture.importSession(json);
+            return {
+                ringBufferLength: replayCapture.ringBuffer.length,
+                eventSnapshotLength: replayCapture.eventSnapshots.length
+            };
+        },
+        getReplaySnapshot(index = 0, source = 'ring') {
+            const list = source === 'event' ? replayCapture.eventSnapshots : replayCapture.ringBuffer;
+            const snapshot = list[index];
+            return snapshot ? structuredClone(snapshot) : null;
+        },
         getUiState() {
             return {
                 selectedTrackId: store.get('selectedTrackId'),
