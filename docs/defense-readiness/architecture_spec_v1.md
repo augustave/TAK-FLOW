@@ -62,7 +62,7 @@ Summarize the current architecture, component responsibilities, and evidence-pro
 - smoke coverage is still targeted, not comprehensive
 - local tests outside Playwright are syntax and bundle integrity checks, not broad scenario assertions
 - bundle output includes a large main chunk (`677.54 kB` minified) that should be monitored
-- replay export identifiers still use legacy `tak-h` schema and filename naming
+- ~~replay export identifiers still use legacy `tak-h` schema and filename naming~~ resolved 2026-07-02: runtime emits `tak-flow.replay.v1` / `replay.tak-flow.*.json` (claim C-010); legacy imports still accepted
 - repository naming and upstream history are still transitioning, which can confuse artifact provenance
 
 ## Acceptance Criteria

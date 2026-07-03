@@ -28,16 +28,16 @@ Separate claims TAK-FLOW can support today from those it cannot yet support.
 | C-009 | TAK-FLOW is an operational command-and-control system suitable for defense fielding. | `README.md`, repo state | Rejected | The repo supports prototype/simulation claims, not deployment claims. |
 | C-010 | Exported replay artifacts are fully normalized to the TAK-FLOW project identity. | `tests/smoke.spec.js`, replay export metadata | Verified | Normalized 2026-07-02: runtime emits `tak-flow.replay.v1` and `replay.tak-flow.*.json`; smoke asserts both. Legacy `tak-h.replay.v1` remains importable. |
 | C-011 | The replay export path emitted legacy TAK-H identifiers at runtime prior to 2026-07-02. | git history, `src/core/ReplayCapture.js` | Superseded | Resolved by C-010 normalization; retained for audit trail. |
-| C-012 | The system correctly identifies and culls tracks undergoing EW alpha-decay. | `ew_degradation_test_suite_v1.md`, `tests/ew_degradation.spec.js`, `npm run test:ew` | Verified | Re-verified 2026-07-02: `npm run test:ew` now exists and passed 7 consecutive runs. The spec pins determinism via a worker `SET_EW_ZONES` override (play-area-wide zone) and selects only a track with actively decreasing confidence, eliminating the wander-out and static-provenance-score flake modes. |
-| C-013 | Ghost tracks are isolated from the strike-designation workflow. | `ghost_track_precision_report_v1.md`, `tests/ew_degradation.spec.js` | Verified | 100% isolation proven under 10,000 track burst load. |
-| C-014 | V-JEPA alert-prioritization latency is consistently sub-50ms. | `alert_prioritization_latency_report_v1.md` | Verified | Measured average latency of 32.4ms during swarm fractures. |
+| C-012 | The system correctly identifies and culls tracks undergoing EW alpha-decay. | `docs/defense-readiness/ew_degradation_test_suite_v1.md`, `tests/ew_degradation.spec.js`, `npm run test:ew` | Verified | Re-verified 2026-07-02: `npm run test:ew` now exists and passed 7 consecutive runs. The spec pins determinism via a worker `SET_EW_ZONES` override (play-area-wide zone) and selects only a track with actively decreasing confidence, eliminating the wander-out and static-provenance-score flake modes. |
+| C-013 | Ghost tracks are isolated from the strike-designation workflow. | `docs/defense-readiness/ghost_track_precision_report_v1.md`, `tests/ew_degradation.spec.js` | Verified | Isolation and designation blocking re-runnable at small scale via `npm run test:ew`. The 10,000-track burst, heap, and frame-rate figures are report-only: no in-repo harness reproduces them (worker clamps ghost spawns to 1-3 per burst). |
+| C-014 | V-JEPA alert-prioritization latency is consistently sub-50ms. | `docs/defense-readiness/alert_prioritization_latency_report_v1.md` | Verified | Report-only: the 32.4ms average has no in-repo measurement harness yet; `npm run smoke` proves the advisory gate functions but does not time it. Gate is a rule-based heuristic threshold, not a learned model. |
 | C-015 | Viewport symbology colors stay synchronized with DOM panel tokens, including high-contrast mode. | `src/core/TrackManager.js` `syncPaletteFromCss`, `src/main.js` `isHighContrast` subscription, `docs/defense-readiness/visual_token_manifest_v1.md` | Verified | Verified 2026-07-02 via live browser eval: 3D palette follows CSS custom properties through a high-contrast on/off round trip. No automated regression test yet. |
 
 ## Evidence Links
 
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/README.md`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/package.json`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/ew_degradation_test_suite_v1.md`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/ghost_track_precision_report_v1.md`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/alert_prioritization_latency_report_v1.md`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/tests/ew_degradation.spec.js`
+- `README.md`
+- `package.json`
+- `docs/defense-readiness/ew_degradation_test_suite_v1.md`
+- `docs/defense-readiness/ghost_track_precision_report_v1.md`
+- `docs/defense-readiness/alert_prioritization_latency_report_v1.md`
+- `tests/ew_degradation.spec.js`
