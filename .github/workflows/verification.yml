@@ -27,8 +27,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Bundle budget
+        run: npm run check:bundle-budget
+
       - name: Code integrity checks
         run: npm test
+
+      - name: Unit tests
+        run: npm run test:unit
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium

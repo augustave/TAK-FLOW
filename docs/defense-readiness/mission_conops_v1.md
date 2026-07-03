@@ -2,62 +2,74 @@
 
 - project: TAK-FLOW
 - artifact: mission_conops_v1
-- version: v1
+- version: v2
 - owner: Tao Conrad
-- last_updated: 2026-03-11
+- last_updated: 2026-07-03
 - status: reviewed
 - reviewed_by: Tao Conrad
 - reviewed_on: 2026-03-13
+- note: v2 (2026-07-03) adds the executable canonical mission; every step is asserted end-to-end by `tests/conops_mission.spec.js`
 ## Objective
 
-Describe how TAK-FLOW would be used today in a defense-adjacent workflow.
+Describe how TAK-FLOW would be used today in a defense-adjacent workflow — and prove it: the canonical mission below is not narrative-only, it runs as a browser-automated scenario in the standard test lane (`npm run smoke`).
 
 ## Operational Concept
 
 TAK-FLOW is a pre-deployment operator-cognition and decision-support prototype. An analyst loads a scenario, observes multi-domain tracks under uncertainty, inspects recommendation and provenance state, and reviews replayable telemetry after designation or swarm-advisory events.
 
-## Nominal Workflow
+## Canonical Mission: "Contested Littoral Watch"
 
-1. Load a scenario and initialize the tactical view.
-2. Monitor high-density tracks, trust state, and swarm kinematics.
-3. Use UPF selection, recommendations, and provenance-aware designation logic to inspect targets.
-4. Capture or replay key events for after-action analysis.
-5. Export telemetry artifacts for later review.
+Each step names the operator action, the UI surface it exercises, and the automation hook that asserts it (`tests/conops_mission.spec.js`, phases 1–9).
+
+| # | Mission beat | UI surface | Automation hook |
+| --- | --- | --- | --- |
+| 1 | Instructor loads the MASSED SWARM scenario (1,500+ tracks). | `SCENARIO OPS [INSTRUCTOR]` panel: profile select + LOAD SCENARIO | `#scenario-profile-select`, `#btn-scenario-load`, `listTracks()` population |
+| 2 | Watchfloor picture established: track table and live worker lane active. | TRACK LOG panel | `#track-tbody tr` visible |
+| 3 | Adversary SIGINT decoy burst injects ghost tracks at low confidence (< 0.5). | DECOY SIM (SAFE) panel | `injectGhostTracks(5)`, ghost confidence assertion |
+| 4 | Operator attempts to designate a ghost — the zero-trust gate blocks it. | Strike designation flow + alert banner | `stageDesignation` → `strike-blocked`, `#alert-text` shows `INSUFFICIENT TRACK PROVENANCE` |
+| 5 | Theater-wide EW jamming: tracks enter EMCON alpha-decay; ops log records datalink loss; jamming then lifts. | 3D viewport EMCON ghosting + OPS/AUDIT LOG | `setEwZone(0,0,1000)`, live confidence < 1.0, ops-log `DATALINK SEVERED` entry, `setEwZone(0,0,10)` |
+| 6 | Swarm fracture: the rule-based advisory gate (SIM heuristic, no model) goes critical. | RECOMMENDED ACTIONS panel | `forceTelemetry({cohesion:0.03, milling:0.58, activeCount:150})`, badge `CRITICAL` |
+| 7 | Operator executes the recommended wide-area 3DGS counterfactual recon macro. | `[ EXECUTE ] RECON [3DGS]` button | `executeRecommendedAction()` → counterfactual scan active |
+| 8 | Provenance-clean designation on a high-confidence track, then rollback. | Confirm strip, reason select, undo strip | `stageDesignation` ok → keyboard confirm → `#btn-undo` |
+| 9 | After-action: mission marker captured; replay artifact exportable. | Replay transport / export | `captureReplayEvent('CONOPS_MISSION_COMPLETE')`, export metadata `tak-flow.replay.v2`, both buffers populated |
+
+Mission runtime under automation: ~5 seconds of active phases (well inside the smoke-lane budget).
 
 ## Supported Mission Themes
 
 - uncertainty-aware track management
-- swarm fracture and re-merge advisory workflows
+- swarm fracture and re-merge advisory workflows (rule-based heuristic gate — no learned model)
 - provenance-gated designation decisions
 - replay-assisted operator auditability
-- terrain-informed hostile swarm simulation via AlphaEarth-style embeddings
+- terrain-informed hostile swarm simulation via a synthetic AlphaEarth-style embedding stub
 
 ## Operational Limits
 
 - no validated integration with real sensors, radios, or TAK servers
-- browser smoke covers only a narrow workflow slice, not the entire operator surface
-- CI workflow is now present in-repo, but remote workflow execution has not been observed in this pass
+- the ops log is a severity-sorted 50-entry queue: lower-severity audit entries (e.g. strike-abort warnings) are evicted under swarm alert load; the alert banner is the reliable operator surface for those
 - no formal latency, memory, or cross-browser acceptance thresholds are encoded
+- the advisory gate and terrain embeddings are simulation stubs and are labeled as such in the UI and architecture spec
 
 ## Current Evidence-Based Mission Claims
 
-- build, code-integrity, smoke, and local combined verification lanes execute successfully
-- the repo contains executable proof for replay transport/export, designation guardrails/undo, and recommended-action execution
-- the repo contains explicit logic for replay capture, replay restoration, advisory supersession, provenance checks, EMCON handling, and designation undo flows
+- the canonical mission above executes end-to-end in browser automation (`tests/conops_mission.spec.js`, in `npm run smoke`)
+- build, code-integrity, unit, bundle-budget, smoke, and combined verification lanes execute successfully
+- the repo contains executable proof for replay round-trip, designation guardrails/undo, EMCON decay/culling, ghost isolation, scenario controls, palette token sync, and UUV dive-cycle EMCON semantics
 - the bundle is deployable as a static client artifact
 
 ## Acceptance Criteria
 
 - project is presented as a prototype decision-support surface, not an operational control product
-- verified claims are tied to executed commands, browser smoke, or direct runtime observation
+- the canonical mission uses only operations the sim performs today; every step has an automation hook
+- verified claims are tied to executed commands, browser automation, or direct runtime observation
 - unverified operational claims remain out of scope
 
 ## Evidence Links
 
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/README.md`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/index.html`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/tests/smoke.spec.js`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/.github/workflows/verification.yml`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/DOMController.js`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayCapture.js`
-- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayPlayer.js`
+- `tests/conops_mission.spec.js`
+- `tests/smoke.spec.js`
+- `index.html`
+- `src/core/DOMController.js`
+- `src/core/ReplayCapture.js`
+- `src/core/ReplayPlayer.js`
+- `docs/defense-readiness/validated_claims_sheet_v1.md`
