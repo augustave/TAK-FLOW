@@ -134,7 +134,11 @@ export class TrackManager {
                 return;
             }
 
+            // Always clear the frame-in-flight flag (a stuck flag deadlocks the
+            // sim on replay exit), but never let an in-flight live frame clobber
+            // a restored replay snapshot.
             this.workerPending = false;
+            if (this.replayMode) return;
             if (payload.intents) {
                 this.applyOpforIntents(new Float32Array(payload.intents));
             }
@@ -975,6 +979,8 @@ export class TrackManager {
 
         const renderRows = [];
         const liveMap = new Map();
+        const ghostMeta = [];
+        const emconMeta = [];
         snapshot.trackState.forEach((entry) => {
             liveMap.set(entry.id, {
                 x: entry.x,
@@ -999,27 +1005,65 @@ export class TrackManager {
                     tr.pos.set(entry.x, entry.y);
                     if (tr.vel) tr.vel.set(entry.vx || 0, entry.vy || 0);
                 }
-                return;
+                // Hostile-lane tracks render exclusively through worker rows,
+                // so a captured worker entityType must be re-synthesized below
+                // or the track has no visual during replay. Friendly/unknown
+                // (and hostiles that had no live row) stop here.
+                if (track.type !== 'hostile' || !entry.entityType) return;
             }
 
-            if (entry.entityType) {
-                renderRows.push(
-                    Number.parseInt(String(entry.id).replace(/\D/g, ''), 10) || 0,
-                    entry.entityType,
-                    entry.x,
-                    entry.y,
-                    entry.z || 0,
-                    Math.atan2(entry.vy || 0, entry.vx || 1),
-                    Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
-                    entry.radius || 0,
-                    entry.count || 1,
-                    entry.confidence || 0
-                );
+            // Worker-lane rows (ghosts, EMCON extrapolations, centroids,
+            // hostile singles) are re-synthesized into a render buffer. Ghost
+            // rows have entityType 0 and negative numeric ids — both must
+            // survive the round trip or replay identity resolution breaks.
+            const idString = String(entry.id);
+            const digits = Number.parseInt(idString.replace(/\D/g, ''), 10) || 0;
+            const numericId = idString.startsWith('GHOST-') ? -digits : digits;
+            renderRows.push(
+                numericId,
+                entry.entityType || 0,
+                entry.x,
+                entry.y,
+                entry.z || 0,
+                Math.atan2(entry.vy || 0, entry.vx || 1),
+                Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
+                entry.radius || 0,
+                entry.count || 1,
+                entry.confidence || 0
+            );
+
+            if (idString.startsWith('GHOST-')) {
+                ghostMeta.push({
+                    id: idString,
+                    numericId,
+                    profileId: entry.rfProfile || null,
+                    x: entry.x,
+                    y: entry.y,
+                    confidence: entry.confidence
+                });
+            } else if (isEmconType(entry.entityType)) {
+                emconMeta.push({
+                    id: idString.startsWith('CENTROID-') ? idString : `SW-${digits}`,
+                    realId: idString,
+                    numericId,
+                    radius: entry.radius || 0,
+                    confidence: entry.confidence,
+                    x: entry.x,
+                    y: entry.y
+                });
             }
         });
 
         this.liveTrackStateById = liveMap;
         this.latestRenderingBuffer = new Float32Array(renderRows);
+
+        // Rebuild the metadata maps the render loop uses for string-id
+        // resolution and hit-testing — in live mode these arrive with each
+        // worker frame; in replay they must come from the snapshot itself.
+        this.latestGhostMetadata = ghostMeta;
+        this.ghostMetaByNumericId = new Map(ghostMeta.map(item => [item.numericId, item]));
+        this.latestEmconMetadata = emconMeta;
+        this.emconMetaByNumericId = new Map(emconMeta.map(item => [item.numericId, item]));
     }
 
     restoreSnapshot(snapshot) {
