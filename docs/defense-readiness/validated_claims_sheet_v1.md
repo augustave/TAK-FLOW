@@ -8,7 +8,7 @@
 - status: reviewed
 - reviewed_by: Tao Conrad
 - reviewed_on: 2026-03-13
-- note: C-010, C-011, C-012 revalidated and C-015 added on 2026-07-02 (semantic unification pass); C-012 unblocked later on 2026-07-02 (deterministic EW culling spec + `test:ew` lane)
+- note: C-010, C-011, C-012 revalidated and C-015 added on 2026-07-02 (semantic unification pass); C-012 unblocked later on 2026-07-02 (deterministic EW culling spec + `test:ew` lane); C-016 through C-028 added and C-003/C-005/C-007/C-015 limitations closed on 2026-07-03 (readiness roadmap execution: entity identity + replay v2, planned test lanes, docs v2, capability wave, Phase-20 closeout, demo + deploy, first green remote CI run)
 ## Objective
 
 Separate claims TAK-FLOW can support today from those it cannot yet support.
@@ -23,7 +23,7 @@ Separate claims TAK-FLOW can support today from those it cannot yet support.
 | C-004 | The UI implements provenance-aware designation guardrails and undo behavior. | `src/core/DOMController.js`, `tests/smoke.spec.js` | Verified | Smoke covers guardrail block and undo path; canvas-driven designation placement is still assisted by the `?e2e=1` harness. |
 | C-005 | The hostile/EMCON lane uses a dedicated worker and confidence decay logic. | `src/core/opforWorker.js`, `npm run check:worker`, `tests/entity_identity.spec.js`, `tests/opfor_behavior.spec.js`, `tests/uuv_cycle.spec.js` | Verified | Behavior-lane coverage added 2026-07-03 via the worker DIAGNOSTICS channel: pheromone deposition, EMCON bookkeeping, EW-zone round-trip, scenario reset clearing, and UUV dive-cycle EMCON semantics. Behavior-tree branch decisions (evade/flank) remain untested individually. |
 | C-006 | The dependency tree is currently free of known vulnerabilities. | `npm audit --json` | Verified | Time-bounded to the 2026-03-11 validation pass. |
-| C-007 | The project has CI-backed enforcement for its readiness lanes. | `.github/workflows/verification.yml`, `npm run ci:verify` | Verified | Workflow is present in repo and the same lane passes locally; remote Actions execution has not yet been observed in this pass. |
+| C-007 | The project has CI-backed enforcement for its readiness lanes. | `.github/workflows/verification.yml`, `npm run ci:verify`, first green remote run: https://github.com/augustave/TAK-FLOW/actions/runs/28648999020 | Verified | Remote GitHub Actions execution observed green on 2026-07-03 (build, bundle budget, integrity checks, unit lane, browser suite: 20 passed + 2 documented CI skips). Enforcement runs on every PR and push to main of `augustave/TAK-FLOW`. Shared-runner constraints (drill-scale e2e boot, two swarm-scale CI skips) are documented in mission CONOPS v2 and C-020/C-023. |
 | C-008 | The project has browser-level automated proof for replay, designation, and advisory workflows. | `tests/smoke.spec.js`, `npm run smoke` | Verified | Current smoke scope is narrow and intentionally targeted. |
 | C-009 | TAK-FLOW is an operational command-and-control system suitable for defense fielding. | `README.md`, repo state | Rejected | The repo supports prototype/simulation claims, not deployment claims. |
 | C-010 | Exported replay artifacts are fully normalized to the TAK-FLOW project identity. | `tests/smoke.spec.js`, replay export metadata | Verified | Normalized 2026-07-02: runtime emits `tak-flow.replay.v1` and `replay.tak-flow.*.json`; smoke asserts both. Legacy `tak-h.replay.v1` remains importable. |
