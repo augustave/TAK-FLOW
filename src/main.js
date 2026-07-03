@@ -530,8 +530,16 @@ let lastHiddenRenderTs = 0;
 let lastEnvSyncTs = 0;
 const compassNeedle = document.getElementById('compass-needle');
 
+// e2e runs headless on shared CI runners where a 60fps sim loop over 1,500
+// tracks starves the main thread (frozen actionability checks, expired
+// ghosts between test round-trips). ~15fps leaves CPU headroom; all sim
+// timing is wall-clock (dt / performance.now), so behavior is unchanged.
+const scheduleFrame = isE2EMode
+    ? (fn) => setTimeout(() => requestAnimationFrame(fn), 45)
+    : (fn) => requestAnimationFrame(fn);
+
 function animate(ts) {
-    requestAnimationFrame(animate);
+    scheduleFrame(animate);
     if(lastFrameTs === 0) lastFrameTs = ts;
     const dt = Math.min((ts - lastFrameTs) / 1000, 0.1);
     lastFrameTs = ts;

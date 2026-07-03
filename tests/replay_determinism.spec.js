@@ -59,20 +59,38 @@ test.describe('TAK-FLOW replay viewport determinism', () => {
   test('scrubbed frames restore exact identities for ghosts, EMCON, and singles', async ({ page }) => {
     await setupDeterminismApi(page);
 
-    // Build a rich frame: ghosts + submerged UUVs (EMCON) + hostile singles.
+    // Build a rich frame: ghosts + submerged UUVs (EMCON) + hostile singles,
+    // then capture the marker page-side in the SAME task the ghosts are
+    // observed alive — ghosts live 8-12s and inter-round-trip gaps on slow
+    // runners can exceed that.
     await page.evaluate(() => {
       window.__TAK_FLOW_TEST__.injectGhostTracks(4, 'dji-test');
       window.__TAK_FLOW_TEST__.setUuvDepthOverride(-20);
     });
 
-    await expect.poll(async () =>
-      page.evaluate(() => window.__TAK_FLOW_TEST__.listGhosts().length)
-    , { timeout: 10000 }).toBeGreaterThan(0);
-
-    // Mark an event frame while ghosts + submerged UUVs are provably live —
-    // captureReplayEvent snapshots synchronously.
-    await page.waitForTimeout(800);
-    await page.evaluate(() => window.__TAK_FLOW_TEST__.captureReplayEvent('DETERMINISM_MARKER'));
+    // Readiness is checked against liveTrackStateById — the SAME source the
+    // capture serializes. (Ghost metadata arrives a frame earlier via the
+    // worker message; checking it can capture a pre-refresh frame.)
+    const marked = await page.evaluate(async () => {
+      const api = window.__TAK_FLOW_TEST__;
+      const trackManager = window.opsLogInstance.exportContextGetter().trackManager;
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        let ghostCount = 0;
+        let submergedCount = 0;
+        for (const [id, state] of trackManager.liveTrackStateById.entries()) {
+          if (id.startsWith('GHOST-')) ghostCount += 1;
+          if (state.entityType === 4) submergedCount += 1;
+        }
+        if (ghostCount > 0 && submergedCount > 0) {
+          api.captureReplayEvent('DETERMINISM_MARKER');
+          return { ghostCount, submergedCount };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return null;
+    });
+    expect(marked, 'ghosts + submerged UUVs never appeared together in live state').toBeTruthy();
 
     await page.evaluate(() => window.__TAK_FLOW_TEST__.openReplay());
     await expect(page.locator('#replay-transport-bar')).toBeVisible();
@@ -85,8 +103,12 @@ test.describe('TAK-FLOW replay viewport determinism', () => {
     expect(sample.error).toBeUndefined();
 
     const byType = new Map();
+    let ghostRowCount = 0;
     for (const row of sample.rows) {
       byType.set(row.entityType, (byType.get(row.entityType) || 0) + 1);
+      // trackData rows without a live worker row also serialize entityType 0;
+      // real ghost rows are identified by their GHOST- id.
+      if (String(row.id).startsWith('GHOST-') && row.entityType === 0) ghostRowCount += 1;
       expect(row.live, `live state for ${row.id}`).toBeTruthy();
       expect(row.live.x, `${row.id} x`).toBeCloseTo(row.x, 5);
       expect(row.live.y, `${row.id} y`).toBeCloseTo(row.y, 5);
@@ -95,7 +117,7 @@ test.describe('TAK-FLOW replay viewport determinism', () => {
     }
 
     // The frame really contained all three classes under test.
-    expect(byType.get(0) || 0, 'ghost rows').toBeGreaterThan(0);        // SIGINT_GHOST
+    expect(ghostRowCount, 'ghost rows').toBeGreaterThan(0);              // SIGINT_GHOST
     expect(byType.get(4) || 0, 'submerged UUV rows').toBeGreaterThan(0); // UUV_SUBMERGED (EMCON)
     expect(byType.get(5) || 0, 'hostile singles').toBeGreaterThan(0);    // HOSTILE_SINGLE
 

@@ -48,24 +48,31 @@ test.describe('TAK-FLOW CONOPS mission: Contested Littoral Watch', () => {
     // Step 2 — Watchfloor picture: track table and live worker lane are up.
     await expect(page.locator('#track-tbody tr').first()).toBeVisible();
 
-    // Step 3 — SIGINT decoy burst: ghosts enter the picture at low confidence.
+    // Steps 3+4 — SIGINT decoy burst, then the zero-trust designation gate.
+    // Ghosts live 6-12s and the abort banner is a temporary flash, so the
+    // find -> designate -> read-banner chain runs page-side in ONE task:
+    // no ghost expiry or flash decay between Node round-trips.
     await page.evaluate(() => window.__TAK_FLOW_TEST__.injectGhostTracks(5));
-    let ghost = null;
-    await expect.poll(async () => {
-      ghost = await page.evaluate(() => window.__TAK_FLOW_TEST__.missionGhost());
-      return Boolean(ghost);
-    }, { timeout: 15000 }).toBe(true);
-    expect(ghost.confidence).toBeLessThan(0.5);
-
-    // Step 4 — Zero-trust gate: ghost designation is blocked with the
-    // INSUFFICIENT TRACK PROVENANCE guardrail.
-    // Alert banner text is read in the same task: the strike-abort flash is
-    // temporary and expires between round-trips on slow runners.
-    const blocked = await page.evaluate((id) => {
-      window.__TAK_FLOW_TEST__.selectTrack(id);
-      const staged = window.__TAK_FLOW_TEST__.stageDesignation(id);
-      return { ...staged, alertText: document.getElementById('alert-text')?.textContent || '' };
-    }, ghost.id);
+    const blocked = await page.evaluate(async () => {
+      const api = window.__TAK_FLOW_TEST__;
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        const ghost = api.missionGhost();
+        if (ghost) {
+          api.selectTrack(ghost.id);
+          const staged = api.stageDesignation(ghost.id);
+          return {
+            ...staged,
+            ghostConfidence: ghost.confidence,
+            alertText: document.getElementById('alert-text')?.textContent || ''
+          };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return null;
+    });
+    expect(blocked).toBeTruthy();
+    expect(blocked.ghostConfidence).toBeLessThan(0.5);
     expect(blocked.ok).toBe(false);
     expect(blocked.reason).toBe('strike-blocked');
     expect(blocked.alertText).toContain('INSUFFICIENT TRACK PROVENANCE');
