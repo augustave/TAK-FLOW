@@ -6,10 +6,18 @@ on:
       - main
   pull_request:
 
+# Rapid pushes stack runs; only the newest matters.
+concurrency:
+  group: verification-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The serial browser suite (22 tests) plus build + playwright install
+    # needs headroom on 4-core runners; 20 minutes was observed hitting the
+    # job timeout ("cancelled") once the suite grew.
+    timeout-minutes: 40
 
     steps:
       - name: Checkout

@@ -16,8 +16,19 @@ async function setupRoundtripApi(page) {
 }
 
 test.describe('TAK-FLOW replay round-trip', () => {
+  test.setTimeout(120000);
+
   test('exported session re-imports without schema loss and restores a scrubbed frame', async ({ page }) => {
     await setupRoundtripApi(page);
+
+    // Shrink the session first: each snapshot clones the full trackState, and
+    // serializing hundreds of 1,500-row snapshots times out slow CI runners.
+    // The patrol profile (~160 tracks) keeps the round-trip payload small.
+    await page.selectOption('#scenario-profile-select', 'patrol');
+    await page.click('#btn-scenario-load');
+    await expect.poll(async () =>
+      page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks().length)
+    , { timeout: 15000 }).toBeLessThan(400);
 
     // Guarantee at least one event snapshot and a few ring snapshots (250ms cadence).
     await page.evaluate(() => window.__TAK_FLOW_TEST__.captureReplayEvent('ROUNDTRIP_MARKER'));

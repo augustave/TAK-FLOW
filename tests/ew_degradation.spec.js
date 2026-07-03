@@ -38,29 +38,33 @@ test.describe('TAK-FLOW EW Degradation & Ghost-Track Mechanics', () => {
 
     // 1. Inject ghost tracks
     await page.evaluate(() => window.__TAK_FLOW_TEST__.injectGhostTracks(5));
-    
-    // Wait for ghosts to appear in the track list
-    let ghostTrack = null;
+
+    // 2+3. Find a ghost and run every designation assertion in ONE evaluate:
+    // ghosts live only 6-12s, so on a slow CI runner the ghost can expire
+    // between separate round-trips (observed: stageDesignation returning
+    // 'track-not-found' instead of 'strike-blocked').
+    let result = null;
     await expect.poll(async () => {
-      const tracks = await page.evaluate(() => window.__TAK_FLOW_TEST__.listTracks());
-      ghostTrack = tracks.find(t => t.id.startsWith('GHOST-'));
-      return !!ghostTrack;
+      result = await page.evaluate(() => {
+        const api = window.__TAK_FLOW_TEST__;
+        const ghost = api.listTracks().find(t => t.id.startsWith('GHOST-'));
+        if (!ghost) return null;
+        const designable = api.canDesignate(ghost.id);
+        api.selectTrack(ghost.id);
+        const staged = api.stageDesignation(ghost.id);
+        return { ghost, designable, staged };
+      });
+      return Boolean(result);
     }, { timeout: 10000 }).toBe(true);
 
-    // 2. Assert confidence is < 0.5 (as per requirement: aConfidence < 0.5)
-    // The worker sets it to 0.2 + random(0.29) which is max 0.49.
-    expect(ghostTrack.confidenceScore).toBeLessThan(0.5);
-    console.log(`Ghost track ${ghostTrack.id} detected with confidence ${ghostTrack.confidenceScore}`);
+    // Assert confidence is < 0.5 (as per requirement: aConfidence < 0.5)
+    expect(result.ghost.confidenceScore).toBeLessThan(0.5);
+    console.log(`Ghost track ${result.ghost.id} detected with confidence ${result.ghost.confidenceScore}`);
 
-    // 3. Assert blocked from strike-designation
-    const canDesignate = await page.evaluate((id) => window.__TAK_FLOW_TEST__.canDesignate(id), ghostTrack.id);
-    expect(canDesignate).toBe(false);
-    
-    // Verify UI feedback
-    await page.evaluate((id) => window.__TAK_FLOW_TEST__.selectTrack(id), ghostTrack.id);
-    const stageResult = await page.evaluate((id) => window.__TAK_FLOW_TEST__.stageDesignation(id), ghostTrack.id);
-    expect(stageResult.ok).toBe(false);
-    expect(stageResult.reason).toBe('strike-blocked');
+    // Blocked from strike-designation, with UI feedback
+    expect(result.designable).toBe(false);
+    expect(result.staged.ok).toBe(false);
+    expect(result.staged.reason).toBe('strike-blocked');
     await expect(page.locator('#alert-text')).toContainText('INSUFFICIENT TRACK PROVENANCE');
   });
 

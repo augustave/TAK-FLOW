@@ -3,7 +3,10 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.spec.js', // node:test unit files live in tests/unit/*.test.mjs
-  timeout: 60_000,
+  timeout: process.env.CI ? 90_000 : 60_000,
+  // GitHub runners are several times slower than dev machines; 5s assertion
+  // polls flake there (observed on palette sync).
+  expect: { timeout: process.env.CI ? 15_000 : 5_000 },
   fullyParallel: false,
   // The app boots a 1500-track sim per page; parallel chromium instances
   // starve CI runners (observed: every waitForSelector timing out on the

@@ -27,15 +27,17 @@ Resolved readiness limit (2026-07-02):
 - replay artifacts now emit the schema/version string `tak-flow.replay.v1` and the export filename prefix `replay.tak-flow.*.json` (`src/core/ReplayCapture.js`, asserted by `tests/smoke.spec.js`; see claim C-010). Legacy `tak-h.replay.v1` sessions remain importable.
 
 Artifacts:
-- `market_requirements_doc.md`
-- `mission_conops_v1.md`
-- `architecture_spec_v1.md`
-- `interface_control_doc_v1.md`
+- `market_requirements_doc.md` (v2)
+- `mission_conops_v1.md` (v2 — executable canonical mission)
+- `architecture_spec_v1.md` (v2)
+- `interface_control_doc_v1.md` (v2)
 - `threat_model_v1.md`
 - `risk_register_v1.md`
 - `test_plan_v1.md`
 - `test_validation_report_v1.md`
 - `root_cause_analysis_v1.md`
-- `validated_claims_sheet_v1.md`
+- `validated_claims_sheet_v1.md` (C-001…C-028)
 - `operator_runbook_v1.md`
 - `case_study_v1.md`
+- `capture_strategy_deck_v1.md` (every statement claims-backed)
+- `ew_degradation_test_suite_v1.md` / `ghost_track_precision_report_v1.md` / `alert_prioritization_latency_report_v1.md` (ingested evidence reports with provenance headers)
