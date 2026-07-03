@@ -85,6 +85,7 @@ Mesh routing (`TrackManager.animateTracks`): EMCON-predicate rows → `emconMesh
 - `centroids`: `[{ id, count, radius, childIds }]` — drives `isHiddenByCentroid` suppression of member tracks and one-shot `[SWARM-CENTROID]` CRITICAL ops-log entries
 - `emcon`: `[{ id ('CENTROID-<n>' | 'SW-<n>'), numericId, radius, confidence, x, y }]` — drives one-shot `[EW ALERT]` WARNING entries and id resolution for EMCON rows
 - `ghosts`: `[{ id ('GHOST-<n>'), numericId (negative), profileId (RF family id or null), x, y, confidence }]`
+- `pheromone`: `[{ x, y, level }]` — stigmergy grid cells with `|level| >= 0.05`, strongest-first, capped at 400; cell centers on the 2.5-unit spatial hash. Drives the HUD-toggled "HOSTILE ROUTE MEMORY (SIM)" heat overlay (`pheromoneOverlay` store key, default off; hidden in replay mode — snapshots do not carry the grid)
 
 `intents`: flat `Float32Array`, stride 4 `[id, vx, vy, vz]` (`vz` always 0.0), one row per hostile; applied by `TrackManager.applyOpforIntents` as `desiredOpforVector` on hostile swarm boids.
 

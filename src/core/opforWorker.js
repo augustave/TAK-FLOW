@@ -875,6 +875,19 @@ self.onmessage = function(e) {
     const renderingBuffer = new Float32Array(renderRows.length);
     for (let i = 0; i < renderRows.length; i++) renderingBuffer[i] = renderRows[i];
 
+    // Stigmergy overlay export: strongest grid cells only (level >= 0.05,
+    // capped) so the per-frame ui payload stays bounded.
+    const PHEROMONE_EXPORT_MIN = 0.05;
+    const PHEROMONE_EXPORT_CAP = 400;
+    const pheromoneCells = [];
+    for (const [key, level] of pheromoneGrid.entries()) {
+        if (Math.abs(level) < PHEROMONE_EXPORT_MIN) continue;
+        const [cx, cy] = key.split(',').map(Number);
+        pheromoneCells.push({ x: (cx + 0.5) * 2.5, y: (cy + 0.5) * 2.5, level });
+    }
+    pheromoneCells.sort((a, b) => Math.abs(b.level) - Math.abs(a.level));
+    if (pheromoneCells.length > PHEROMONE_EXPORT_CAP) pheromoneCells.length = PHEROMONE_EXPORT_CAP;
+
     const uiMetadata = {
         centroids: centroids.map(c => ({
             id: c.id,
@@ -883,7 +896,8 @@ self.onmessage = function(e) {
             childIds: c.childIds
         })),
         emcon: emconAlerts,
-        ghosts: ghostUiTracks
+        ghosts: ghostUiTracks,
+        pheromone: pheromoneCells
     };
 
     self.postMessage({

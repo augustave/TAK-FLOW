@@ -6,6 +6,7 @@ export class HUDController {
         this.densityButtonEl = document.getElementById('btn-density');
         this.contrastButtonEl = document.getElementById('btn-contrast');
         this.motionButtonEl = document.getElementById('btn-motion');
+        this.pheromoneButtonEl = document.getElementById('btn-pheromone');
         this.panelOpacityInputEl = document.getElementById('panel-opacity');
         this.panelOpacityValueEl = document.getElementById('panel-opacity-value');
         this.leftDrawerToggleEl = document.getElementById('left-drawer-toggle');
@@ -29,6 +30,14 @@ export class HUDController {
         });
         this.motionButtonEl?.addEventListener('click', () => {
             store.set('reduceMotion', !store.get('reduceMotion'));
+        });
+        this.pheromoneButtonEl?.addEventListener('click', () => {
+            store.set('pheromoneOverlay', !store.get('pheromoneOverlay'));
+        });
+        store.subscribe('pheromoneOverlay', (enabled) => {
+            if (!this.pheromoneButtonEl) return;
+            this.pheromoneButtonEl.textContent = enabled ? 'ROUTE MEMORY (SIM): ON' : 'ROUTE MEMORY (SIM): OFF';
+            this.pheromoneButtonEl.classList.toggle('active', Boolean(enabled));
         });
         this.panelOpacityInputEl?.addEventListener('input', e => {
             this.setPanelOpacity(Number(e.target.value));

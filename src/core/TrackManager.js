@@ -56,6 +56,7 @@ export class TrackManager {
         this.liveTrackStateById = new Map();
         this.trackLossLogs = new Set();
         this.latestWorkerDiagnostics = null;
+        this.latestPheromoneCells = [];
         this.testUuvDepthOverride = null; // e2e-only: pins UUV depth (dive cycle is wall-clock driven)
 
         // Phase 12 Dynamical System Validation Harness
@@ -163,6 +164,8 @@ export class TrackManager {
                 this.latestGhostMetadata.forEach(ghostData => {
                     this.ghostMetaByNumericId.set(ghostData.numericId, ghostData);
                 });
+
+                this.latestPheromoneCells = payload.ui.pheromone || [];
                 
                 if (this.latestEmconMetadata.length > 0 && window.opsLogInstance) {
                     if (!this.emconLogs) this.emconLogs = new Set();
@@ -176,6 +179,42 @@ export class TrackManager {
                 }
             }
         };
+    }
+
+    updatePheromoneOverlay() {
+        if (!this.pheromoneMesh) return;
+        const enabled = Boolean(store.get('pheromoneOverlay')) && !this.replayMode;
+        const cells = enabled ? (this.latestPheromoneCells || []) : [];
+        this.pheromoneMesh.visible = enabled && cells.length > 0;
+        if (!this.pheromoneMesh.visible) {
+            this.pheromoneMesh.count = 0;
+            return;
+        }
+
+        const dummy = new THREE.Object3D();
+        const color = new THREE.Color();
+        const limit = Math.min(cells.length, 400);
+        for (let i = 0; i < limit; i++) {
+            const cell = cells[i];
+            dummy.position.set(cell.x, cell.y, 0.06);
+            dummy.rotation.set(0, 0, 0);
+            dummy.scale.setScalar(1.0);
+            dummy.updateMatrix();
+            this.pheromoneMesh.setMatrixAt(i, dummy.matrix);
+            if (cell.level >= 0) {
+                // validated route memory: cyan, intensity by level
+                const t = Math.min(1, cell.level / 2.0);
+                color.setRGB(0.0, 0.45 + 0.55 * t, 0.6 + 0.4 * t);
+            } else {
+                // denial trace (SAM-effect): red-orange, intensity by magnitude
+                const t = Math.min(1, Math.abs(cell.level) / 50.0);
+                color.setRGB(0.6 + 0.4 * t, 0.2, 0.05);
+            }
+            this.pheromoneMesh.setColorAt(i, color);
+        }
+        this.pheromoneMesh.count = limit;
+        this.pheromoneMesh.instanceMatrix.needsUpdate = true;
+        if (this.pheromoneMesh.instanceColor) this.pheromoneMesh.instanceColor.needsUpdate = true;
     }
 
     updateUiSwarms(uiMetadata) {
@@ -406,6 +445,22 @@ export class TrackManager {
             }
             this.overlayGroup.add(inst.mesh);
         });
+
+        // Stigmergy heat overlay ("HOSTILE ROUTE MEMORY (SIM)") — hidden until
+        // the HUD toggle enables it; worker exports at most 400 cells.
+        const pheromoneGeo = new THREE.PlaneGeometry(2.5, 2.5);
+        const pheromoneMat = new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0.32,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        this.pheromoneMesh = new THREE.InstancedMesh(pheromoneGeo, pheromoneMat, 400);
+        this.pheromoneMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this.pheromoneMesh.count = 0;
+        this.pheromoneMesh.visible = false;
+        this.pheromoneMesh.userData = { isTerrainFeature: true };
+        this.overlayGroup.add(this.pheromoneMesh);
 
         const centroidGeo = new THREE.RingGeometry(0.8, 1.0, 32);
         const centroidMat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.9, side: THREE.DoubleSide, vertexColors: true });
@@ -783,6 +838,14 @@ export class TrackManager {
             this.centroidMesh.material.dispose();
             this.centroidMesh = null;
         }
+
+        if (this.pheromoneMesh) {
+            this.overlayGroup.remove(this.pheromoneMesh);
+            this.pheromoneMesh.geometry.dispose();
+            this.pheromoneMesh.material.dispose();
+            this.pheromoneMesh = null;
+        }
+        this.latestPheromoneCells = [];
 
         if (this.emconMesh) {
             this.overlayGroup.remove(this.emconMesh);
@@ -1704,6 +1767,8 @@ export class TrackManager {
                 }
             }
         });
+
+        this.updatePheromoneOverlay();
 
         // Render Spatial Hash Data for Hostiles and Centroids
         if (this.latestRenderingBuffer && this.centroidMesh && this.instances.hostile.mesh && this.emconMesh) {

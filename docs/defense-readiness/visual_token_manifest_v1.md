@@ -73,18 +73,21 @@ Snapshot schema field: `vjepaGate` (canonical since 2026-07-02). Restore paths i
 
 | Token | Value | Source |
 | --- | --- | --- |
-| replay schema version | `tak-flow.replay.v1` | `ReplayCapture.js` `SNAPSHOT_VERSION` (exported; imported by `ReplayPlayer.js`) |
-| accepted legacy versions | `tak-h.replay.v1` | `ReplayCapture.js` `LEGACY_SNAPSHOT_VERSIONS` (import-only) |
+| replay schema version | `tak-flow.replay.v2` (since 2026-07-03) | `ReplayCapture.js` `SNAPSHOT_VERSION` (exported; imported by `ReplayPlayer.js`) |
+| accepted legacy versions | `tak-flow.replay.v1`, `tak-h.replay.v1` | `ReplayCapture.js` `LEGACY_SNAPSHOT_VERSIONS` (import-only, entity types normalized) |
 | replay export filename | `replay.tak-flow.<sessionId>.<startTimestamp>.json` | `ReplayCapture.getExportFilename` |
 | telemetry report type | `TAK-FLOW TELEMETRY REPORT` | `OpsLog.buildTelemetryReport` |
 | telemetry export filename | `TAK_TELEMETRY_REPORT_<iso>.json` | `OpsLog.js` download anchor |
+| route-memory overlay (positive trace) | cyan ramp `rgb(0, 0.45–1.0, 0.6–1.0)` by level/2.0 | `TrackManager.updatePheromoneOverlay` |
+| route-memory overlay (denial trace) | red-orange ramp `rgb(0.6–1.0, 0.2, 0.05)` by |level|/50 | `TrackManager.updatePheromoneOverlay` |
+| route-memory HUD toggle | `ROUTE MEMORY (SIM): ON/OFF` (`#btn-pheromone`) | `HUDController` / `index.html` |
 
 ## Known Gaps
 
 - Kinematics badge thresholds (0.6 / 0.7 / 0.8) exist only in code; no doc restates them (this manifest is now the reference).
-- `tests/ew_degradation.spec.js` EMCON culling test selects a nondeterministic track and fails intermittently (observed failing 2026-07-02 on both pre- and post-change trees). Needs deterministic EW-zone track pinning.
-- `validated_claims_sheet_v1` C-012 referenced an `npm run test:ew` script that does not exist in `package.json`.
-- EMCON/ghost shader-side confidence colors and decoy overlays are not yet token-governed; they remain hardcoded in worker/shader paths.
+- ~~EMCON culling test nondeterminism~~ resolved 2026-07-02: `npm run test:ew` is deterministic via the worker `SET_EW_ZONES` override (claim C-012).
+- ~~`npm run test:ew` script missing~~ resolved 2026-07-02: script exists in `package.json`.
+- EMCON/ghost shader-side confidence colors and decoy overlays are not yet token-governed; they remain hardcoded in worker/shader paths. The pheromone overlay ramps above are likewise code-defined constants, not CSS tokens.
 
 ## Evidence Links
 
