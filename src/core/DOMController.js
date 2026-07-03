@@ -615,8 +615,10 @@ export class DOMController {
     updateTrackTable() {
         if(!this.tbody) return;
         this.tbody.replaceChildren();
-        
-        const selectedTrackId = store.get('selectedTrackId');
+
+        // In replay mode the highlighted row follows the snapshot's captured
+        // selection, not the live store selection (AUDIT F1).
+        const selectedTrackId = this.trackManager.getRenderSelectedTrackId(store.get('selectedTrackId'));
         
         let tracks = this.trackManager.getTrackData();
         
@@ -975,6 +977,12 @@ export class DOMController {
                 this.opsLog.feedEl.appendChild(entry);
             });
         }
+
+        // AUDIT F1: Track Log row highlight and the active-track panel follow
+        // the snapshot's captured selection while scrubbing.
+        this.updateTrackTable();
+        const replaySelectedId = this.trackManager.getRenderSelectedTrackId(store.get('selectedTrackId'));
+        this.updateActiveTrackPanel(replaySelectedId ? this.trackManager.getTrackById(replaySelectedId) : null);
     }
 
     restoreLiveState(snapshot) {
