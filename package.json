@@ -15,6 +15,8 @@
     "test:unit": "node --test tests/unit/*.test.mjs",
     "smoke": "playwright test",
     "test:ew": "playwright test tests/ew_degradation.spec.js",
+    "record:demo": "npm run build && node scripts/record_demo.mjs",
+    "check:deploy": "node scripts/check-deploy.mjs",
     "ci:verify": "npm run build && npm run check:bundle-budget && npm test && npm run test:unit && npm run smoke"
   },
   "dependencies": {

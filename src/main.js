@@ -33,6 +33,31 @@ trackManager.replayCapture = replayCapture;
 replayCapture.start();
 const replayPlayer = new ReplayPlayer(trackManager, domController);
 
+// ?demo=1 — boot straight into the canonical mission replay (shipped in
+// public/demo/, recorded via `npm run record:demo`). Mirrors the manual
+// import path so live capture is backed up and restored on close.
+const isDemoMode = new URLSearchParams(window.location.search).has('demo');
+if (isDemoMode) {
+    fetch('demo/replay.tak-flow.canonical-mission-01.json')
+        .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.text();
+        })
+        .then((sessionJson) => {
+            replayPlayer.pause();
+            replayPlayer.backupLiveCapture();
+            replayCapture.stop();
+            replayCapture.importSession(sessionJson);
+            replayPlayer.isImportedSession = true;
+            replayPlayer.openTransport(replayCapture);
+            opsLog.addEntry('MODE', 'SYSTEM', 'CANONICAL MISSION REPLAY LOADED (?demo=1)', 0, 999);
+        })
+        .catch((err) => {
+            console.warn('[demo] canonical replay unavailable:', err);
+            opsLog.addEntry('WARNING', 'SYSTEM', `DEMO REPLAY UNAVAILABLE: ${err.message}`, 1, 999);
+        });
+}
+
 // HUDController (constructed earlier) toggles body.high-contrast before this fires,
 // so the 3D palette re-reads the post-toggle CSS token values.
 store.subscribe('isHighContrast', () => trackManager.syncPaletteFromCss());
