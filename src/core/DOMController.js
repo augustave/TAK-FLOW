@@ -580,7 +580,7 @@ export class DOMController {
         } else {
             const brg = (Math.atan2(track.x, track.y) * 180 / Math.PI + 360) % 360;
             const rng = Math.sqrt(track.x * track.x + track.y * track.y).toFixed(1);
-            document.getElementById('at-kinematics').textContent = `${brg.toFixed(0).padStart(3,'0')}° / ${rng}km / ${track.spd}kt`;
+            document.getElementById('at-kinematics').textContent = `${brg.toFixed(0).padStart(3,'0')}° / ${rng}km / ${Math.round(track.spd)}kt`;
             document.getElementById('at-source').textContent = prov.source;
             
             const confEl = document.getElementById('at-confidence');
@@ -707,7 +707,7 @@ export class DOMController {
             const rangeCell = document.createElement('td');
             rangeCell.textContent = `${rng}km`;
             const speedCell = document.createElement('td');
-            speedCell.textContent = String(t.spd);
+            speedCell.textContent = String(Math.round(t.spd));
 
             const trustCell = document.createElement('td');
             const trustWrap = document.createElement('span');

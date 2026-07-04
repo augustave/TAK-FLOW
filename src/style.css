@@ -24,6 +24,7 @@
             background: #030608;
             overflow: hidden;
             font-family: 'JetBrains Mono', 'Share Tech Mono', monospace;
+            font-variant-numeric: tabular-nums;
             color: var(--text-primary);
             user-select: none;
             cursor: crosshair;

@@ -40,4 +40,5 @@ Artifacts:
 - `operator_runbook_v1.md`
 - `case_study_v1.md`
 - `capture_strategy_deck_v1.md` (every statement claims-backed)
+- `ui_layout_contract_v1.md` (zone/z-index/palette/typography contract, real values)
 - `ew_degradation_test_suite_v1.md` / `ghost_track_precision_report_v1.md` / `alert_prioritization_latency_report_v1.md` (ingested evidence reports with provenance headers)
