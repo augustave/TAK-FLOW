@@ -1,0 +1,43 @@
+{
+  "version": "tak-flow.replay.v1",
+  "sessionId": "fixture-v1-minimal",
+  "startTimestamp": 1750000000000,
+  "ringBuffer": [
+    {
+      "version": "tak-flow.replay.v1",
+      "timestamp": 250,
+      "trackState": [
+        { "id": "SW-1042", "x": 5, "y": -3, "z": 0, "vx": 0, "vy": 1, "vz": 0, "confidence": 1, "domain": "hostile", "emconState": false, "isSigint": false, "rfProfile": null, "entityType": 1, "radius": 0, "count": 1, "subtype": "UAS SWARM" },
+        { "id": "CENTROID-77", "x": -8, "y": 2, "z": 0, "vx": 0, "vy": 2, "vz": 0, "confidence": 0.4, "domain": "centroid", "emconState": true, "isSigint": false, "rfProfile": null, "entityType": 2, "radius": 6, "count": 18, "subtype": "EMCON TRACK" },
+        { "id": "GHOST-3", "x": 12, "y": 9, "z": 0, "vx": 0, "vy": 0, "vz": 0, "confidence": 0.31, "domain": "synthetic", "emconState": false, "isSigint": true, "rfProfile": "bebop", "entityType": 0, "radius": 0, "count": 1, "subtype": "SIGINT GHOST" }
+      ],
+      "orderParams": { "polarization": 0.5, "milling": 0.1, "cohesion": 0.8, "activeCount": 120 },
+      "vjepaGate": { "active": false, "onset": null },
+      "ufpState": { "primaryId": null, "coneAngleDeg": 0, "candidates": [], "active": false, "coneX": 0, "coneY": 0, "radius": 12, "cursorX": 0, "cursorY": 0, "primaryConfidence": 0, "lastUpdatedMs": 0 },
+      "opsLogDelta": [],
+      "recommendedAction": { "active": false, "type": null, "counterfactualBound": false },
+      "counterfactualState": { "active": false, "x": 0, "y": 0, "radius": 0 },
+      "uiState": { "selectedTrackId": null, "reconMode": false, "destinationMode": false, "pendingDesignation": null, "pendingDesignationStage": 0, "undoDesignation": null, "confirmVisible": false, "undoVisible": false, "vjepaHoverActive": false },
+      "designationQueue": [],
+      "triggerEvent": null
+    }
+  ],
+  "eventSnapshots": [
+    {
+      "version": "tak-flow.replay.v1",
+      "timestamp": 500,
+      "trackState": [
+        { "id": "SW-1042", "x": 5.2, "y": -2.8, "z": 0, "vx": 0, "vy": 1, "vz": 0, "confidence": 1, "domain": "hostile", "emconState": false, "isSigint": false, "rfProfile": null, "entityType": 1, "radius": 0, "count": 1, "subtype": "UAS SWARM" }
+      ],
+      "orderParams": { "polarization": 0.5, "milling": 0.1, "cohesion": 0.8, "activeCount": 120 },
+      "vjepaGate": { "active": false, "onset": null },
+      "ufpState": { "primaryId": null, "coneAngleDeg": 0, "candidates": [], "active": false, "coneX": 0, "coneY": 0, "radius": 12, "cursorX": 0, "cursorY": 0, "primaryConfidence": 0, "lastUpdatedMs": 0 },
+      "opsLogDelta": [],
+      "recommendedAction": { "active": false, "type": null, "counterfactualBound": false },
+      "counterfactualState": { "active": false, "x": 0, "y": 0, "radius": 0 },
+      "uiState": { "selectedTrackId": null, "reconMode": false, "destinationMode": false, "pendingDesignation": null, "pendingDesignationStage": 0, "undoDesignation": null, "confirmVisible": false, "undoVisible": false, "vjepaHoverActive": false },
+      "designationQueue": [],
+      "triggerEvent": "FIXTURE_MARKER"
+    }
+  ]
+}

@@ -237,6 +237,7 @@
                 <div class="hud-controls-row">
                     <button id="btn-contrast" class="hud-btn">CONTRAST: STD</button>
                     <button id="btn-motion" class="hud-btn">MOTION: FULL</button>
+                    <button id="btn-pheromone" class="hud-btn" title="Hostile route memory heat overlay — rule-based stigmergy grid, simulation only">ROUTE MEMORY (SIM): OFF</button>
                     <button id="btn-map" class="hud-btn active">MAP: TOPO</button>
                     <button id="btn-replay-open" class="hud-btn">REPLAY</button>
                 </div>
@@ -462,7 +463,7 @@
                     </div>
                     <div class="recommendation-card recommendation-critical" id="rec-vjepa-card" style="display: none;" tabindex="0">
                         <div class="recommendation-label">PRIORITY ALPHA</div>
-                        <div class="recommendation-text" id="rec-vjepa-warning">[ TAK-FLOW SYSTEM ADVISORY ] SWARM IS CURRENTLY FRACTURED (COHESION NEAR 0). WARNING: V-JEPA LATENT MODEL PREDICTS SWARM WILL INITIATE TOPOLOGICAL FOLDING AND RE-MERGE ONCE CLEAR OF EW ZONE.</div>
+                        <div class="recommendation-text" id="rec-vjepa-warning">[ TAK-FLOW SYSTEM ADVISORY | SIM HEURISTIC / NO MODEL ] SWARM IS CURRENTLY FRACTURED (COHESION NEAR 0). ADVISORY GATE ASSESSES SWARM MAY RE-MERGE ONCE CLEAR OF EW ZONE (RULE-BASED ORDER-PARAMETER THRESHOLD).</div>
                         <div class="recommendation-text recommendation-cta" id="rec-vjepa-recommendation">[ RECOMMENDED ACTION: INITIATE WIDE-AREA 3DGS RECON TO ESTABLISH PROVENANCE BEFORE RE-ASSEMBLY. ]</div>
                         <div class="hud-controls-row" style="margin-top: 8px;">
                             <button id="btn-rec-execute" class="hud-btn rec-execute-btn">[ EXECUTE ] RECON [3DGS]</button>
@@ -476,7 +477,7 @@
         <div class="panel" style="flex: 0 0 auto;" id="instructor-panel">
             <div class="panel-header">
                 <span class="panel-title">SCENARIO OPS [INSTRUCTOR]</span>
-                <span class="panel-badge badge-warning">OFFLINE</span>
+                <span class="panel-badge badge-warning" id="instructor-badge">OFFLINE</span>
             </div>
             <div class="panel-body">
                 <div class="data-row">
@@ -490,6 +491,13 @@
                 <div class="hud-controls-row" style="margin-top: 6px;">
                     <button id="btn-scenario-load" class="hud-btn" style="color: var(--amber-alert); border-color: var(--amber-alert);">LOAD SCENARIO</button>
                     <button id="btn-scenario-clear" class="hud-btn">CLEAR</button>
+                </div>
+                <div class="data-row" style="margin-top: 8px;">
+                    <span class="data-label">TRAINING PRESET</span>
+                    <select id="training-preset-select" class="sim-select"></select>
+                </div>
+                <div class="hud-controls-row" style="margin-top: 6px;">
+                    <button id="btn-preset-arm" class="hud-btn" style="color: var(--amber-alert); border-color: var(--amber-alert);">ARM PRESET</button>
                 </div>
             </div>
         </div>

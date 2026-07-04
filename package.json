@@ -10,9 +10,14 @@
     "check:worker": "node --check src/core/opforWorker.js",
     "check:bundle": "npx esbuild src/main.js --bundle --format=esm --outfile=/tmp/tak-smoke.js",
     "check": "npm run check:worker && npm run check:bundle",
+    "check:bundle-budget": "node scripts/check_bundle_budget.mjs",
     "test": "npm run check",
+    "test:unit": "node --test tests/unit/*.test.mjs",
     "smoke": "playwright test",
-    "ci:verify": "npm run build && npm test && npm run smoke"
+    "test:ew": "playwright test tests/ew_degradation.spec.js",
+    "record:demo": "npm run build && node scripts/record_demo.mjs",
+    "check:deploy": "node scripts/check-deploy.mjs",
+    "ci:verify": "npm run build && npm run check:bundle-budget && npm test && npm run test:unit && npm run smoke"
   },
   "dependencies": {
     "three": "^0.181.1"

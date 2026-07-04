@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { trackData, sources, confidences, loadScenario } from '../data/mockData.js';
 import { store } from './Store.js';
+import { ENTITY_TYPE, RENDER_ROW_STRIDE, isEmconType, isCentroidType } from './trackSchema.js';
 
 export class TrackManager {
     constructor(overlayGroup) {
@@ -54,6 +55,9 @@ export class TrackManager {
         this.ghostMetaByNumericId = new Map();
         this.liveTrackStateById = new Map();
         this.trackLossLogs = new Set();
+        this.latestWorkerDiagnostics = null;
+        this.latestPheromoneCells = [];
+        this.testUuvDepthOverride = null; // e2e-only: pins UUV depth (dive cycle is wall-clock driven)
 
         // Phase 12 Dynamical System Validation Harness
         this.swarmTelemetry = {
@@ -101,6 +105,21 @@ export class TrackManager {
         this.initTracks();
     }
 
+    // Keep 3D palette locked to the CSS custom-property tokens so DOM panels and
+    // viewport symbology always agree (including high-contrast remaps).
+    syncPaletteFromCss() {
+        const styles = getComputedStyle(document.body);
+        const apply = (type, varName, fallback) => {
+            const raw = styles.getPropertyValue(varName).trim() || fallback;
+            this.typeColors[type].set(raw);
+            const mesh = this.instances[type]?.mesh;
+            if (mesh?.material?.color) mesh.material.color.set(raw);
+        };
+        apply('hostile', '--red-force', '#ff3333');
+        apply('friendly', '--blue-force', '#4a9eff');
+        apply('unknown', '--yellow-unknown', '#ffcc00');
+    }
+
     initOpforWorker() {
         this.opforWorker = new Worker(new URL('./opforWorker.js', import.meta.url), { type: 'module' });
         this.workerPending = false;
@@ -111,8 +130,16 @@ export class TrackManager {
                 this.handleTrackLost(payload.id);
                 return;
             }
+            if (payload.type === 'DIAGNOSTICS') {
+                this.latestWorkerDiagnostics = payload;
+                return;
+            }
 
+            // Always clear the frame-in-flight flag (a stuck flag deadlocks the
+            // sim on replay exit), but never let an in-flight live frame clobber
+            // a restored replay snapshot.
             this.workerPending = false;
+            if (this.replayMode) return;
             if (payload.intents) {
                 this.applyOpforIntents(new Float32Array(payload.intents));
             }
@@ -137,6 +164,8 @@ export class TrackManager {
                 this.latestGhostMetadata.forEach(ghostData => {
                     this.ghostMetaByNumericId.set(ghostData.numericId, ghostData);
                 });
+
+                this.latestPheromoneCells = payload.ui.pheromone || [];
                 
                 if (this.latestEmconMetadata.length > 0 && window.opsLogInstance) {
                     if (!this.emconLogs) this.emconLogs = new Set();
@@ -150,6 +179,42 @@ export class TrackManager {
                 }
             }
         };
+    }
+
+    updatePheromoneOverlay() {
+        if (!this.pheromoneMesh) return;
+        const enabled = Boolean(store.get('pheromoneOverlay')) && !this.replayMode;
+        const cells = enabled ? (this.latestPheromoneCells || []) : [];
+        this.pheromoneMesh.visible = enabled && cells.length > 0;
+        if (!this.pheromoneMesh.visible) {
+            this.pheromoneMesh.count = 0;
+            return;
+        }
+
+        const dummy = new THREE.Object3D();
+        const color = new THREE.Color();
+        const limit = Math.min(cells.length, 400);
+        for (let i = 0; i < limit; i++) {
+            const cell = cells[i];
+            dummy.position.set(cell.x, cell.y, 0.06);
+            dummy.rotation.set(0, 0, 0);
+            dummy.scale.setScalar(1.0);
+            dummy.updateMatrix();
+            this.pheromoneMesh.setMatrixAt(i, dummy.matrix);
+            if (cell.level >= 0) {
+                // validated route memory: cyan, intensity by level
+                const t = Math.min(1, cell.level / 2.0);
+                color.setRGB(0.0, 0.45 + 0.55 * t, 0.6 + 0.4 * t);
+            } else {
+                // denial trace (SAM-effect): red-orange, intensity by magnitude
+                const t = Math.min(1, Math.abs(cell.level) / 50.0);
+                color.setRGB(0.6 + 0.4 * t, 0.2, 0.05);
+            }
+            this.pheromoneMesh.setColorAt(i, color);
+        }
+        this.pheromoneMesh.count = limit;
+        this.pheromoneMesh.instanceMatrix.needsUpdate = true;
+        if (this.pheromoneMesh.instanceColor) this.pheromoneMesh.instanceColor.needsUpdate = true;
     }
 
     updateUiSwarms(uiMetadata) {
@@ -286,7 +351,9 @@ export class TrackManager {
         const msgPayload = {
             buffer: buffer.buffer,
             decoyActive: Boolean(decoyState.running),
-            decoyBurstCount: Number(decoyState.burstCount) || 0
+            decoyBurstCount: Number(decoyState.burstCount) || 0,
+            decoyProfileId: decoyState.profileId || null,
+            decoyGhostProfile: decoyState.ghost || null
         };
 
         const transferrables = [buffer.buffer];
@@ -378,6 +445,22 @@ export class TrackManager {
             }
             this.overlayGroup.add(inst.mesh);
         });
+
+        // Stigmergy heat overlay ("HOSTILE ROUTE MEMORY (SIM)") — hidden until
+        // the HUD toggle enables it; worker exports at most 400 cells.
+        const pheromoneGeo = new THREE.PlaneGeometry(2.5, 2.5);
+        const pheromoneMat = new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0.32,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        this.pheromoneMesh = new THREE.InstancedMesh(pheromoneGeo, pheromoneMat, 400);
+        this.pheromoneMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this.pheromoneMesh.count = 0;
+        this.pheromoneMesh.visible = false;
+        this.pheromoneMesh.userData = { isTerrainFeature: true };
+        this.overlayGroup.add(this.pheromoneMesh);
 
         const centroidGeo = new THREE.RingGeometry(0.8, 1.0, 32);
         const centroidMat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.9, side: THREE.DoubleSide, vertexColors: true });
@@ -756,6 +839,14 @@ export class TrackManager {
             this.centroidMesh = null;
         }
 
+        if (this.pheromoneMesh) {
+            this.overlayGroup.remove(this.pheromoneMesh);
+            this.pheromoneMesh.geometry.dispose();
+            this.pheromoneMesh.material.dispose();
+            this.pheromoneMesh = null;
+        }
+        this.latestPheromoneCells = [];
+
         if (this.emconMesh) {
             this.overlayGroup.remove(this.emconMesh);
             this.emconMesh.geometry.dispose();
@@ -878,12 +969,12 @@ export class TrackManager {
                 vz: velocity.vz,
                 confidence,
                 domain: track.type,
-                emconState: Boolean(live && (live.entityType === 2 || live.entityType === 4)),
+                emconState: Boolean(live && isEmconType(live.entityType)),
                 isSigint: false,
                 rfProfile: null,
                 entityType: live?.entityType ?? 0,
                 radius: live?.radius ?? 0,
-                count: 1,
+                count: Math.max(1, Math.round(live?.count ?? 1)),
                 subtype: track.subtype
             });
             seen.add(track.id);
@@ -903,12 +994,12 @@ export class TrackManager {
                 vz: 0,
                 confidence: live.confidence,
                 domain: String(id).startsWith('CENTROID-') ? 'centroid' : 'synthetic',
-                emconState: Boolean(emcon || live.entityType === 2 || live.entityType === 4),
+                emconState: Boolean(emcon || isEmconType(live.entityType)),
                 isSigint: Boolean(ghost || String(id).startsWith('GHOST-')),
                 rfProfile: ghost?.rfProfile || null,
                 entityType: live.entityType,
                 radius: live.radius || emcon?.radius || 0,
-                count: String(id).startsWith('CENTROID-') ? Math.max(1, Math.round((live.radius || 1) * 2)) : 1,
+                count: Math.max(1, Math.round(live.count ?? 1)),
                 subtype: String(id).startsWith('GHOST-') ? 'SIGINT GHOST' : 'EMCON TRACK'
             });
         });
@@ -951,6 +1042,8 @@ export class TrackManager {
 
         const renderRows = [];
         const liveMap = new Map();
+        const ghostMeta = [];
+        const emconMeta = [];
         snapshot.trackState.forEach((entry) => {
             liveMap.set(entry.id, {
                 x: entry.x,
@@ -958,6 +1051,7 @@ export class TrackManager {
                 z: entry.z,
                 speed: Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
                 radius: entry.radius || 0,
+                count: entry.count || 1,
                 confidence: entry.confidence,
                 entityType: entry.entityType || 0,
                 rfProfile: entry.rfProfile || null
@@ -974,27 +1068,65 @@ export class TrackManager {
                     tr.pos.set(entry.x, entry.y);
                     if (tr.vel) tr.vel.set(entry.vx || 0, entry.vy || 0);
                 }
-                return;
+                // Hostile-lane tracks render exclusively through worker rows,
+                // so a captured worker entityType must be re-synthesized below
+                // or the track has no visual during replay. Friendly/unknown
+                // (and hostiles that had no live row) stop here.
+                if (track.type !== 'hostile' || !entry.entityType) return;
             }
 
-            if (entry.entityType) {
-                renderRows.push(
-                    Number.parseInt(String(entry.id).replace(/\D/g, ''), 10) || 0,
-                    entry.entityType,
-                    entry.x,
-                    entry.y,
-                    entry.z || 0,
-                    Math.atan2(entry.vy || 0, entry.vx || 1),
-                    Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
-                    entry.radius || 0,
-                    entry.count || 1,
-                    entry.confidence || 0
-                );
+            // Worker-lane rows (ghosts, EMCON extrapolations, centroids,
+            // hostile singles) are re-synthesized into a render buffer. Ghost
+            // rows have entityType 0 and negative numeric ids — both must
+            // survive the round trip or replay identity resolution breaks.
+            const idString = String(entry.id);
+            const digits = Number.parseInt(idString.replace(/\D/g, ''), 10) || 0;
+            const numericId = idString.startsWith('GHOST-') ? -digits : digits;
+            renderRows.push(
+                numericId,
+                entry.entityType || 0,
+                entry.x,
+                entry.y,
+                entry.z || 0,
+                Math.atan2(entry.vy || 0, entry.vx || 1),
+                Math.sqrt((entry.vx || 0) ** 2 + (entry.vy || 0) ** 2),
+                entry.radius || 0,
+                entry.count || 1,
+                entry.confidence || 0
+            );
+
+            if (idString.startsWith('GHOST-')) {
+                ghostMeta.push({
+                    id: idString,
+                    numericId,
+                    profileId: entry.rfProfile || null,
+                    x: entry.x,
+                    y: entry.y,
+                    confidence: entry.confidence
+                });
+            } else if (isEmconType(entry.entityType)) {
+                emconMeta.push({
+                    id: idString.startsWith('CENTROID-') ? idString : `SW-${digits}`,
+                    realId: idString,
+                    numericId,
+                    radius: entry.radius || 0,
+                    confidence: entry.confidence,
+                    x: entry.x,
+                    y: entry.y
+                });
             }
         });
 
         this.liveTrackStateById = liveMap;
         this.latestRenderingBuffer = new Float32Array(renderRows);
+
+        // Rebuild the metadata maps the render loop uses for string-id
+        // resolution and hit-testing — in live mode these arrive with each
+        // worker frame; in replay they must come from the snapshot itself.
+        this.latestGhostMetadata = ghostMeta;
+        this.ghostMetaByNumericId = new Map(ghostMeta.map(item => [item.numericId, item]));
+        this.latestEmconMetadata = emconMeta;
+        this.emconMetaByNumericId = new Map(emconMeta.map(item => [item.numericId, item]));
     }
 
     restoreSnapshot(snapshot) {
@@ -1399,8 +1531,9 @@ export class TrackManager {
                 
                 // Depth oscillation between 0 and -30
                 tr.z = Math.sin(Date.now() / 20000 + tr.offset) * 30.0;
-                if (tr.z > 0) tr.z = 0; 
+                if (tr.z > 0) tr.z = 0;
                 if (tr.t.threat_level === 'HIGH' && tr.t.time_to_event_seconds < 120) tr.z = -20;
+                if (this.testUuvDepthOverride !== null) tr.z = this.testUuvDepthOverride;
                 
                 // Ocean Current Drift
                 const driftX = Math.sin(tr.pos.y * 0.05 + Date.now()/10000) * 0.5;
@@ -1635,6 +1768,8 @@ export class TrackManager {
             }
         });
 
+        this.updatePheromoneOverlay();
+
         // Render Spatial Hash Data for Hostiles and Centroids
         if (this.latestRenderingBuffer && this.centroidMesh && this.instances.hostile.mesh && this.emconMesh) {
             let discreteCount = 0;
@@ -1645,7 +1780,7 @@ export class TrackManager {
             if (this.uuvMesh) this.uuvMesh.material.opacity = 0.9 * (1 - skinVal);
             
             const buffer = this.latestRenderingBuffer;
-            const STRIDE = 10;
+            const STRIDE = RENDER_ROW_STRIDE;
             const color = new THREE.Color();
             
             this.hostileIdMap = {};
@@ -1662,20 +1797,21 @@ export class TrackManager {
                 const yaw = buffer[i+5];
                 const speed = buffer[i+6];
                 const radius = buffer[i+7];
+                const count = buffer[i+8];
                 const threat = THREE.MathUtils.clamp(buffer[i+9], 0, 1);
 
                 dummy.position.set(x, y, 0.2);
                 dummy.rotation.set(0, 0, yaw);
-                
-                const isCentroid = entityType === 1.0;
-                const isEmcon = entityType === 2.0;
-                const isUUV_Surfaced = entityType === 3.0;
-                const isUUV_Submerged = entityType === 4.0;
-                
+
+                const isCentroid = isCentroidType(entityType);
+                const isEmcon = isEmconType(entityType);
+                const isUUV_Surfaced = entityType === ENTITY_TYPE.UUV_SURFACED;
+                const isUUV_Submerged = entityType === ENTITY_TYPE.UUV_SUBMERGED;
+
                 let strId = `SW-${numericId}`;
                 if (isCentroid) {
                     strId = `CENTROID-${numericId}`;
-                } else if (isEmcon || isUUV_Submerged) {
+                } else if (isEmcon) {
                     const emconData = this.emconMetaByNumericId.get(numericId);
                     if (emconData) strId = emconData.realId || emconData.id || strId;
                 } else if (numericId < 0 && this.ghostMetaByNumericId.has(numericId)) {
@@ -1684,7 +1820,7 @@ export class TrackManager {
                     strId = this.numericTrackIdMap.get(numericId);
                 }
 
-                liveTrackState.set(strId, { x, y, speed, radius, confidence: threat, entityType });
+                liveTrackState.set(strId, { x, y, speed, radius, count, confidence: threat, entityType });
                 
                 const isSelected = strId === renderSelectedId;
                 const upfRole = this.getUpfTrackRole(strId);
@@ -1694,7 +1830,7 @@ export class TrackManager {
                 if (upfRole === 1) baseSc *= 1.24 + (((Math.sin(t * 9.0) + 1) * 0.5) * 0.16);
                 if (upfRole === 2) baseSc *= 0.82;
                 
-                if (isEmcon || isUUV_Submerged) {
+                if (isEmcon) {
                     this.emconIdMap[emconCount] = strId;
                     if (this.emconConfidenceAttr) this.emconConfidenceAttr.setX(emconCount, threat);
                     if (this.emconFocusAttr) this.emconFocusAttr.setX(emconCount, upfRole === 2 ? this.upfConfig.nonPrimaryOpacity : 1.0);

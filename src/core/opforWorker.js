@@ -1,3 +1,5 @@
+import { ENTITY_TYPE, RENDER_ROW_STRIDE } from './trackSchema.js';
+
 // --- CORE BEHAVIOR TREE CLASSES ---
 class Node {
     evaluate(track, tacticalState) { return 'FAILURE'; }
@@ -176,7 +178,8 @@ const tacticalState = {
     alphaEarthData: null
 };
 
-const EW_ZONES = [ { x: 0, y: 0, radius: 10.0 } ];
+const DEFAULT_EW_ZONES = [ { x: 0, y: 0, radius: 10.0 } ];
+const EW_ZONES = DEFAULT_EW_ZONES.map(z => ({ ...z }));
 const emconState = new Map(); // idStr -> { lastX, lastY, entryTime }
 const MAX_VELOCITY = 5.0; // units/sec
 const EMCON_CONFIDENCE_DECAY_PER_SEC = 0.01;
@@ -188,6 +191,48 @@ const FORCED_CONFIDENCE_TTL_MS = 180000;
 const ghostTracks = new Map(); // numericId -> { id, x, y, yaw, confidence, expiresAt }
 let nextGhostId = -1;
 let lastDecoyBurstCount = 0;
+let lastCentroidCount = 0;
+
+// RF ghost-track profile: worker-side family behavior for SIGINT decoys.
+// Confidence is hard-clamped below 0.5 regardless of profile input — the
+// zero-trust designation isolation (claim C-013) is an invariant, not a knob.
+const GHOST_CONFIDENCE_CEILING = 0.499;
+const DEFAULT_GHOST_PROFILE = Object.freeze({
+    confidenceRange: Object.freeze([0.2, 0.49]),
+    lifetimeMs: Object.freeze([6000, 12000]),
+    speed: 12.0,
+    spoofWindow: Object.freeze({ onMs: 4000, offMs: 0 })
+});
+let activeGhostProfile = { ...DEFAULT_GHOST_PROFILE };
+let activeGhostProfileId = null;
+let decoyActiveSince = 0;
+
+function sanitizeGhostProfile(raw) {
+    if (!raw || typeof raw !== 'object') return { ...DEFAULT_GHOST_PROFILE };
+    const range = Array.isArray(raw.confidenceRange) ? raw.confidenceRange : DEFAULT_GHOST_PROFILE.confidenceRange;
+    const lifetime = Array.isArray(raw.lifetimeMs) ? raw.lifetimeMs : DEFAULT_GHOST_PROFILE.lifetimeMs;
+    const window = raw.spoofWindow && typeof raw.spoofWindow === 'object' ? raw.spoofWindow : DEFAULT_GHOST_PROFILE.spoofWindow;
+    const cMin = clamp(Number(range[0]) || 0.2, 0.01, GHOST_CONFIDENCE_CEILING);
+    const cMax = clamp(Number(range[1]) || 0.49, cMin, GHOST_CONFIDENCE_CEILING);
+    const lMin = Math.max(500, Number(lifetime[0]) || 6000);
+    const lMax = Math.max(lMin, Number(lifetime[1]) || 12000);
+    return {
+        confidenceRange: [cMin, cMax],
+        lifetimeMs: [lMin, lMax],
+        speed: clamp(Number(raw.speed) || DEFAULT_GHOST_PROFILE.speed, 0.5, 40.0),
+        spoofWindow: {
+            onMs: Math.max(0, Number(window.onMs) || 0),
+            offMs: Math.max(0, Number(window.offMs) || 0)
+        }
+    };
+}
+
+function isSpoofWindowOpen(now) {
+    const { onMs, offMs } = activeGhostProfile.spoofWindow;
+    if (offMs <= 0 || onMs <= 0) return true; // degenerate window: always emitting
+    const elapsed = Math.max(0, now - decoyActiveSince);
+    return (elapsed % (onMs + offMs)) < onMs;
+}
 
 // Phase 16: Pheromone Data Layer
 const pheromoneGrid = new Map(); // "x,y" -> level
@@ -218,6 +263,19 @@ function maybeEmitTrackLost(trackId) {
     if (lostTrackNotified.has(trackId)) return;
     lostTrackNotified.add(trackId);
     self.postMessage({ type: 'TRACK_LOST', id: trackId });
+}
+
+function setEwZones(zones) {
+    const sanitized = (Array.isArray(zones) ? zones : [])
+        .map(z => ({ x: Number(z && z.x), y: Number(z && z.y), radius: Number(z && z.radius) }))
+        .filter(z => Number.isFinite(z.x) && Number.isFinite(z.y) && Number.isFinite(z.radius) && z.radius > 0);
+    EW_ZONES.length = 0;
+    EW_ZONES.push(...sanitized);
+}
+
+function resetEwZones() {
+    EW_ZONES.length = 0;
+    EW_ZONES.push(...DEFAULT_EW_ZONES.map(z => ({ ...z })));
 }
 
 function normalizeForcedTrackId(rawId) {
@@ -266,17 +324,23 @@ function appendRenderRow(rows, id, entityType, x, y, z, yaw, speed, radius, coun
 }
 
 function updateGhostTracks(decoyActive, decoyBurstCount, now) {
-    if (decoyActive && decoyBurstCount > lastDecoyBurstCount) {
+    if (decoyActive && !decoyActiveSince) decoyActiveSince = now;
+    if (!decoyActive) decoyActiveSince = 0;
+
+    if (decoyActive && decoyBurstCount > lastDecoyBurstCount && isSpoofWindowOpen(now)) {
+        const [cMin, cMax] = activeGhostProfile.confidenceRange;
+        const [lMin, lMax] = activeGhostProfile.lifetimeMs;
         const spawnCount = clamp(decoyBurstCount - lastDecoyBurstCount, 1, 3);
         for (let i = 0; i < spawnCount; i++) {
             const ghostId = nextGhostId--;
             ghostTracks.set(ghostId, {
                 id: ghostId,
+                profileId: activeGhostProfileId,
                 x: (Math.random() - 0.5) * 60.0,
                 y: (Math.random() - 0.5) * 60.0,
                 yaw: Math.random() * Math.PI * 2.0,
-                confidence: 0.2 + (Math.random() * 0.29), // always < 0.5
-                expiresAt: now + 6000 + (Math.random() * 6000)
+                confidence: Math.min(GHOST_CONFIDENCE_CEILING, cMin + Math.random() * (cMax - cMin)),
+                expiresAt: now + lMin + (Math.random() * (lMax - lMin))
             });
         }
     }
@@ -291,8 +355,8 @@ function updateGhostTracks(decoyActive, decoyBurstCount, now) {
         }
 
         if (!ghost.vx) {
-            ghost.vx = Math.cos(ghost.yaw) * 12.0;
-            ghost.vy = Math.sin(ghost.yaw) * 12.0;
+            ghost.vx = Math.cos(ghost.yaw) * activeGhostProfile.speed;
+            ghost.vy = Math.sin(ghost.yaw) * activeGhostProfile.speed;
         }
         if (Math.random() < 0.05 || !ghost.targetYaw) ghost.targetYaw = Math.random() * Math.PI * 2.0;
         
@@ -326,6 +390,25 @@ self.onmessage = function(e) {
         return;
     }
 
+    if (payload.type === 'SET_EW_ZONES') {
+        setEwZones(payload.zones);
+        return;
+    }
+
+    if (payload.type === 'DIAGNOSTICS') {
+        self.postMessage({
+            type: 'DIAGNOSTICS',
+            pheromoneCells: pheromoneGrid.size,
+            emconStates: emconState.size,
+            ghostCount: ghostTracks.size,
+            centroidCount: lastCentroidCount,
+            hostiles: tacticalState.hostiles.length,
+            friendlies: tacticalState.friendlies.length,
+            ewZones: EW_ZONES.map(z => ({ ...z }))
+        });
+        return;
+    }
+
     if (payload.type === 'RESET_STATE') {
         emconState.clear();
         lostTrackNotified.clear();
@@ -333,6 +416,10 @@ self.onmessage = function(e) {
         forcedConfidenceById.clear();
         pheromoneGrid.clear();
         lastDecoyBurstCount = 0;
+        activeGhostProfile = { ...DEFAULT_GHOST_PROFILE };
+        activeGhostProfileId = null;
+        decoyActiveSince = 0;
+        resetEwZones();
         return;
     }
     
@@ -347,6 +434,8 @@ self.onmessage = function(e) {
     const rawData = new Float32Array(dataBuffer);
     const decoyActive = Boolean(payload.decoyActive);
     const decoyBurstCount = Number(payload.decoyBurstCount) || 0;
+    activeGhostProfile = sanitizeGhostProfile(payload.decoyGhostProfile);
+    activeGhostProfileId = typeof payload.decoyProfileId === 'string' ? payload.decoyProfileId : null;
     
     if (payload.alphaEarthBuffer) {
         tacticalState.alphaEarthData = new Float32Array(payload.alphaEarthBuffer);
@@ -567,8 +656,10 @@ self.onmessage = function(e) {
         }
     }
 
-    // 3. Output Render Buffer Schema (Stride = 10)
-    const STRIDE = 10;
+    lastCentroidCount = centroids.length;
+
+    // 3. Output Render Buffer Schema (see trackSchema.js)
+    const STRIDE = RENDER_ROW_STRIDE;
     const renderRows = [];
     const now = performance.now();
     const emconAlerts = [];
@@ -619,7 +710,7 @@ self.onmessage = function(e) {
             appendRenderRow(
                 renderRows,
                 c.id,
-                2.0,
+                ENTITY_TYPE.EMCON_CENTROID,
                 state.lastX,
                 state.lastY,
                 0.0,
@@ -644,7 +735,7 @@ self.onmessage = function(e) {
             appendRenderRow(
                 renderRows,
                 c.id,
-                1.0,
+                ENTITY_TYPE.SWARM_CENTROID,
                 c.x,
                 c.y,
                 0.0,
@@ -714,7 +805,7 @@ self.onmessage = function(e) {
                 appendRenderRow(
                     renderRows,
                     h.id,
-                    isUUV ? 4.0 : 2.0,
+                    isUUV ? ENTITY_TYPE.UUV_SUBMERGED : ENTITY_TYPE.EMCON_SINGLE,
                     state.lastX,
                     state.lastY,
                     0.0,
@@ -739,7 +830,7 @@ self.onmessage = function(e) {
                 appendRenderRow(
                     renderRows,
                     h.id,
-                    isUUV ? 3.0 : 1.0,
+                    isUUV ? ENTITY_TYPE.UUV_SURFACED : ENTITY_TYPE.HOSTILE_SINGLE,
                     h.x,
                     h.y,
                     h.z,
@@ -761,7 +852,7 @@ self.onmessage = function(e) {
         appendRenderRow(
             renderRows,
             ghost.id,
-            0.0,
+            ENTITY_TYPE.SIGINT_GHOST,
             ghost.x,
             ghost.y,
             0.0,
@@ -774,6 +865,7 @@ self.onmessage = function(e) {
         ghostUiTracks.push({
             id: ghostTrackId,
             numericId: ghost.id,
+            profileId: ghost.profileId || null,
             x: ghost.x,
             y: ghost.y,
             confidence: renderConfidence
@@ -783,6 +875,19 @@ self.onmessage = function(e) {
     const renderingBuffer = new Float32Array(renderRows.length);
     for (let i = 0; i < renderRows.length; i++) renderingBuffer[i] = renderRows[i];
 
+    // Stigmergy overlay export: strongest grid cells only (level >= 0.05,
+    // capped) so the per-frame ui payload stays bounded.
+    const PHEROMONE_EXPORT_MIN = 0.05;
+    const PHEROMONE_EXPORT_CAP = 400;
+    const pheromoneCells = [];
+    for (const [key, level] of pheromoneGrid.entries()) {
+        if (Math.abs(level) < PHEROMONE_EXPORT_MIN) continue;
+        const [cx, cy] = key.split(',').map(Number);
+        pheromoneCells.push({ x: (cx + 0.5) * 2.5, y: (cy + 0.5) * 2.5, level });
+    }
+    pheromoneCells.sort((a, b) => Math.abs(b.level) - Math.abs(a.level));
+    if (pheromoneCells.length > PHEROMONE_EXPORT_CAP) pheromoneCells.length = PHEROMONE_EXPORT_CAP;
+
     const uiMetadata = {
         centroids: centroids.map(c => ({
             id: c.id,
@@ -791,7 +896,8 @@ self.onmessage = function(e) {
             childIds: c.childIds
         })),
         emcon: emconAlerts,
-        ghosts: ghostUiTracks
+        ghosts: ghostUiTracks,
+        pheromone: pheromoneCells
     };
 
     self.postMessage({

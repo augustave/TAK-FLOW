@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { loadScenario } from './data/mockData.js';
 import { store } from './core/Store.js';
 import { setupMapEngine } from './core/MapEngine.js';
 import { TrackManager } from './core/TrackManager.js';
@@ -14,6 +15,14 @@ import { ReplayPlayer } from './core/ReplayPlayer.js';
 
 const isE2EMode = new URLSearchParams(window.location.search).has('e2e');
 
+// e2e boots at drill scale: the 1,500-track swarm profile exceeds shared CI
+// runner CPU (KNN boids per frame) and freezes actionability checks. Specs
+// that need the massed-swarm picture load it explicitly via the instructor
+// panel. Local interactive boots are unaffected.
+if (isE2EMode) {
+    loadScenario('patrol');
+}
+
 // Setup Map
 const container = document.getElementById('canvas-container');
 const mapEngine = setupMapEngine(container, { allowRendererFallback: isE2EMode });
@@ -28,10 +37,43 @@ const trackManager = new TrackManager(mapEngine.overlayGroup);
 const domController = new DOMController(trackManager, opsLog);
 const drawController = new DrawController(mapEngine.scene, mapEngine.overlayGroup);
 const splatController = new SplatController(mapEngine.scene, mapEngine.overlayGroup);
-const replayCapture = new ReplayCapture(trackManager, domController);
+// e2e runs on shared CI runners where the 4 Hz full-state clone saturates the
+// main thread; a 600ms cadence keeps the page responsive there.
+const replayCapture = new ReplayCapture(trackManager, domController, {
+    intervalMs: isE2EMode ? 600 : 250
+});
 trackManager.replayCapture = replayCapture;
 replayCapture.start();
 const replayPlayer = new ReplayPlayer(trackManager, domController);
+
+// ?demo=1 — boot straight into the canonical mission replay (shipped in
+// public/demo/, recorded via `npm run record:demo`). Mirrors the manual
+// import path so live capture is backed up and restored on close.
+const isDemoMode = new URLSearchParams(window.location.search).has('demo');
+if (isDemoMode) {
+    fetch('demo/replay.tak-flow.canonical-mission-01.json')
+        .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.text();
+        })
+        .then((sessionJson) => {
+            replayPlayer.pause();
+            replayPlayer.backupLiveCapture();
+            replayCapture.stop();
+            replayCapture.importSession(sessionJson);
+            replayPlayer.isImportedSession = true;
+            replayPlayer.openTransport(replayCapture);
+            opsLog.addEntry('MODE', 'SYSTEM', 'CANONICAL MISSION REPLAY LOADED (?demo=1)', 0, 999);
+        })
+        .catch((err) => {
+            console.warn('[demo] canonical replay unavailable:', err);
+            opsLog.addEntry('WARNING', 'SYSTEM', `DEMO REPLAY UNAVAILABLE: ${err.message}`, 1, 999);
+        });
+}
+
+// HUDController (constructed earlier) toggles body.high-contrast before this fires,
+// so the 3D palette re-reads the post-toggle CSS token values.
+store.subscribe('isHighContrast', () => trackManager.syncPaletteFromCss());
 
 opsLog.setExportContext(() => ({
     store,
@@ -158,6 +200,86 @@ if (isE2EMode) {
                 ringBufferLength: payload.ringBuffer.length,
                 eventSnapshotLength: payload.eventSnapshots.length
             };
+        },
+        getLiveTrackState(trackId) {
+            const live = trackManager.liveTrackStateById.get(trackId);
+            return live ? structuredClone({ id: trackId, ...live }) : null;
+        },
+        importReplaySession(sessionJson) {
+            const json = typeof sessionJson === 'string' ? sessionJson : JSON.stringify(sessionJson);
+            replayCapture.importSession(json);
+            return {
+                ringBufferLength: replayCapture.ringBuffer.length,
+                eventSnapshotLength: replayCapture.eventSnapshots.length
+            };
+        },
+        getReplaySnapshot(index = 0, source = 'ring') {
+            const list = source === 'event' ? replayCapture.eventSnapshots : replayCapture.ringBuffer;
+            const snapshot = list[index];
+            return snapshot ? structuredClone(snapshot) : null;
+        },
+        setEwZone(x, y, radius) {
+            const zone = { x, y, radius };
+            trackManager.opforWorker.postMessage({ type: 'SET_EW_ZONES', zones: [zone] });
+            return zone;
+        },
+        injectGhostTracks(count, profileId = null) {
+            const simState = store.get('decoySim') || { running: false, activeDecoys: [], burstCount: 0 };
+            const profile = profileId ? decoySim.profiles.find((p) => p.id === profileId) : null;
+            store.set('decoySim', {
+                running: true,
+                activeDecoys: new Array(count).fill({ ssid: 'MOCK-GHOST', mac: '00:00:00', channel: '01' }),
+                burstCount: (simState.burstCount || 0) + 1,
+                profileId: profile ? profile.id : (simState.profileId || null),
+                ghost: profile?.ghost ? { ...profile.ghost } : (simState.ghost || null)
+            });
+            const wasPending = trackManager.workerPending;
+            trackManager.workerPending = false;
+            trackManager.sendStateToWorker();
+            trackManager.workerPending = wasPending;
+            return true;
+        },
+        canDesignate(trackId) {
+            return domController.canInitiateStrike(trackId);
+        },
+        getTrackConfidence(trackId) {
+            return trackManager.getTrackConfidenceScore(trackId);
+        },
+        setUuvDepthOverride(depth) {
+            trackManager.testUuvDepthOverride = Number.isFinite(depth) ? depth : null;
+            return trackManager.testUuvDepthOverride;
+        },
+        requestWorkerDiagnostics() {
+            trackManager.latestWorkerDiagnostics = null;
+            trackManager.opforWorker.postMessage({ type: 'DIAGNOSTICS' });
+            return true;
+        },
+        getWorkerDiagnostics() {
+            return trackManager.latestWorkerDiagnostics
+                ? structuredClone(trackManager.latestWorkerDiagnostics)
+                : null;
+        },
+        getPaletteState() {
+            const styles = getComputedStyle(document.body);
+            const token = (name) => styles.getPropertyValue(name).trim();
+            const mesh3d = (type) => `#${trackManager.typeColors[type].getHexString()}`;
+            return {
+                isHighContrast: Boolean(store.get('isHighContrast')),
+                tokens: {
+                    redForce: token('--red-force'),
+                    blueForce: token('--blue-force'),
+                    yellowUnknown: token('--yellow-unknown')
+                },
+                palette: {
+                    hostile: mesh3d('hostile'),
+                    friendly: mesh3d('friendly'),
+                    unknown: mesh3d('unknown')
+                }
+            };
+        },
+        setHighContrast(active) {
+            store.set('isHighContrast', Boolean(active));
+            return store.get('isHighContrast');
         },
         getUiState() {
             return {
@@ -417,8 +539,16 @@ let lastHiddenRenderTs = 0;
 let lastEnvSyncTs = 0;
 const compassNeedle = document.getElementById('compass-needle');
 
+// e2e runs headless on shared CI runners where a 60fps sim loop over 1,500
+// tracks starves the main thread (frozen actionability checks, expired
+// ghosts between test round-trips). ~15fps leaves CPU headroom; all sim
+// timing is wall-clock (dt / performance.now), so behavior is unchanged.
+const scheduleFrame = isE2EMode
+    ? (fn) => setTimeout(() => requestAnimationFrame(fn), 45)
+    : (fn) => requestAnimationFrame(fn);
+
 function animate(ts) {
-    requestAnimationFrame(animate);
+    scheduleFrame(animate);
     if(lastFrameTs === 0) lastFrameTs = ts;
     const dt = Math.min((ts - lastFrameTs) / 1000, 0.1);
     lastFrameTs = ts;

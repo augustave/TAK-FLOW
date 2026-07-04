@@ -1,6 +1,11 @@
 import { store } from './Store.js';
+import { normalizeLegacyTrackState } from './trackSchema.js';
 
-const SNAPSHOT_VERSION = 'tak-h.replay.v1';
+export const SNAPSHOT_VERSION = 'tak-flow.replay.v2';
+// Older exports remain importable; new sessions always serialize as SNAPSHOT_VERSION.
+// v1 sessions carry the ambiguous entityType codes (1.0 = centroid OR hostile single,
+// 2.0 = EMCON single OR EMCON centroid) and are normalized on import by id prefix.
+export const LEGACY_SNAPSHOT_VERSIONS = new Set(['tak-flow.replay.v1', 'tak-h.replay.v1']);
 const CAPTURE_INTERVAL_MS = 250;
 const MAX_RING_BUFFER = 14400;
 
@@ -13,7 +18,7 @@ function safeNumber(value, fallback = 0) {
 }
 
 export class ReplayCapture {
-    constructor(trackManager, domController) {
+    constructor(trackManager, domController, options = {}) {
         this.trackManager = trackManager;
         this.domController = domController;
         this.ringBuffer = [];
@@ -23,12 +28,15 @@ export class ReplayCapture {
         this._tickInterval = null;
         this._lastCaptureAt = -Infinity;
         this._seenOpsLogKeys = new Set();
+        // Each ring tick clones the full trackState (1,500+ rows on the swarm
+        // profile); a slower cadence keeps saturated environments responsive.
+        this.captureIntervalMs = Number(options.intervalMs) || CAPTURE_INTERVAL_MS;
     }
 
     start() {
         if (this._tickInterval) return;
         window.opsLogInstance?.addEntry('MODE', 'SYSTEM', 'REPLAY CAPTURE ACTIVE', 0, 999);
-        this._tickInterval = window.setInterval(() => this._tickCapture(), CAPTURE_INTERVAL_MS);
+        this._tickInterval = window.setInterval(() => this._tickCapture(), this.captureIntervalMs);
     }
 
     stop() {
@@ -72,7 +80,7 @@ export class ReplayCapture {
                 cohesion: safeNumber(this.trackManager.swarmTelemetry?.cohesion),
                 activeCount: safeNumber(this.trackManager.swarmTelemetry?.activeCount)
             },
-            vejpaGate: {
+            vjepaGate: {
                 active: Boolean(this.domController?.vjepaWarningActive),
                 onset: this.domController?.vjepaGateOnsetMs ?? null
             },
@@ -103,6 +111,7 @@ export class ReplayCapture {
             },
             uiState: {
                 selectedTrackId: store.get('selectedTrackId') || null,
+                trainingPreset: store.get('trainingPreset') || null,
                 reconMode: Boolean(store.get('reconMode')),
                 destinationMode: Boolean(this.domController?.destinationMode),
                 pendingDesignation: pendingDesignation ? { ...pendingDesignation } : null,
@@ -128,7 +137,7 @@ export class ReplayCapture {
     }
 
     getExportFilename() {
-        return `replay.tak-h.${this.sessionId}.${this.startTimestamp}.json`;
+        return `replay.tak-flow.${this.sessionId}.${this.startTimestamp}.json`;
     }
 
     serializeSession() {
@@ -144,7 +153,7 @@ export class ReplayCapture {
     _tickCapture(force = false) {
         if (this.trackManager?.replayMode) return null;
         const now = performance.now();
-        if (!force && now - this._lastCaptureAt < (CAPTURE_INTERVAL_MS - 5)) return;
+        if (!force && now - this._lastCaptureAt < (this.captureIntervalMs - 5)) return;
         this._lastCaptureAt = now;
         const snapshot = this._buildSnapshot(null);
         this.ringBuffer.push(snapshot);
@@ -184,11 +193,18 @@ export class ReplayCapture {
             throw new Error(`Replay import failed: invalid JSON (${err.message})`);
         }
 
-        if (!parsed || parsed.version !== SNAPSHOT_VERSION) {
+        const versionSupported = parsed
+            && (parsed.version === SNAPSHOT_VERSION || LEGACY_SNAPSHOT_VERSIONS.has(parsed.version));
+        if (!versionSupported) {
             throw new Error('Replay import failed: unsupported schema version');
         }
         if (!Array.isArray(parsed.ringBuffer) || !Array.isArray(parsed.eventSnapshots)) {
             throw new Error('Replay import failed: missing replay buffers');
+        }
+
+        if (parsed.version !== SNAPSHOT_VERSION) {
+            for (const snapshot of parsed.ringBuffer) normalizeLegacyTrackState(snapshot?.trackState);
+            for (const snapshot of parsed.eventSnapshots) normalizeLegacyTrackState(snapshot?.trackState);
         }
 
         this.ringBuffer = parsed.ringBuffer;

@@ -158,7 +158,9 @@ export class DecoySim {
         store.set('decoySim', {
             running: true,
             activeDecoys: this.makeDecoySet(profile, count),
-            burstCount: 0
+            burstCount: 0,
+            profileId: profile.id,
+            ghost: profile.ghost ? { ...profile.ghost } : null
         });
 
         if(this.decoyLastBurstEl) this.decoyLastBurstEl.textContent = '--';

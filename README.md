@@ -61,17 +61,32 @@ The project is built emphasizing maximum runtime execution speed and minimal dep
 *   **Identity & Level Design**: Non-primary cone captures are dampened, while the primary target receives an amber pulsing hex-bracket plus a glowing pointer-to-target guide line.
 *   **Feedforward Auto-Select**: Clicking loosely inside the cone now resolves to the primary target without requiring pixel-perfect raycast hits.
 
+### Phase 20: Deterministic Replay & Temporal State Restoration (closed 2026-07-03)
+*   **Entity Identity Contract**: `src/core/trackSchema.js` gives every entity class a unique render code shared by the worker, the render path, and replay (fixing the historical entityType collisions); replay schema bumped to `tak-flow.replay.v2` with lossless legacy import.
+*   **Deterministic Viewport Restoration**: scrubbed frames restore exact identities/confidences for ghosts, EMCON tracks, centroids, and singles; live worker frames are gated out during replay.
+*   **Panel Fidelity**: Track Log selection, kinematics order parameters, advisory lifecycle, and accumulated ops-log deltas restore frame-by-frame; all six UI-audit findings remediated with test pointers (`AUDIT.md`).
+*   **Ghost RF Families + Training Presets**: decoy profiles carry per-family confidence/lifetime/spoof-window behavior (zero-trust ceiling enforced worker-side); instructor presets arm scenario + EW lay-down + decoy family in one action.
+*   **Route-Memory Overlay**: the worker's stigmergy grid is now a toggleable heat layer (`ROUTE MEMORY (SIM)`), cyan for validated hostile routes, red-orange for SAM denial traces.
+
 ## Running Locally
 1. Clone the repository.
 2. Install dependencies with `npm install`.
 3. Start the development server with `npm run dev`.
 4. Open the local Vite URL shown in the terminal in a modern WebGL-compatible browser.
 
+## Canonical Mission Demo
+- Open the app with `?demo=1` to boot straight into the shipped canonical mission replay (`public/demo/replay.tak-flow.canonical-mission-01.json`) — a GHOST-DISCRIMINATION drill with ghost designation refusal, an EW squall, an advisory onset + 3DGS macro, and a designation/undo cycle, scrubbable in the replay transport.
+- Re-record it after replay-affecting changes with `npm run record:demo`.
+- Verify a deployment serves the real client with `node scripts/check-deploy.mjs <url>` (the repo auto-deploys pushes via the Vercel GitHub integration).
+
 ## Production Build
 1. Run `npm run build`.
 2. Serve the generated `dist/` directory with any static web server.
 
+## Verified Claims
+Every capability statement above traces to a runnable evidence pointer in [docs/defense-readiness/validated_claims_sheet_v1.md](docs/defense-readiness/validated_claims_sheet_v1.md) (C-001…C-026): EMCON decay & culling (C-012, `npm run test:ew`), ghost isolation (C-013), entity identity (C-016), executable CONOPS mission (C-020, `tests/conops_mission.spec.js`), deterministic replay (C-024/C-025), route-memory overlay (C-026), and more. The full lane runs with `npm run ci:verify`. Honesty notes: the "V-JEPA" gate is a rule-based heuristic (no learned model), "AlphaEarth" terrain data is a synthetic stub, and C-009 (operational deployment readiness) is explicitly **Rejected** — TAK-FLOW is a prototype/simulation.
+
 ## Next Steps
-- Add deterministic replay capture for V-JEPA advisory onset/clear transitions and macro execution timing.
-- Expand ghost-track profiles (RF signature families, timed spoof windows, and operator training presets).
-- Add automated browser-level scenario tests to validate recommendation supersession and counterfactual hover overlays end-to-end.
+- Repair the dormant AlphaEarth worker feed (`exportContext` accessor mismatch — see the ICD constraint note) and cover terrain-cost steering with a behavior assertion.
+- Token-govern the shader-side EMCON/ghost confidence colors and the route-memory overlay ramps.
+- Build an in-repo harness for the report-only figures (10k ghost burst, advisory latency) cited by C-013/C-014.

@@ -5,8 +5,9 @@
 - version: v1
 - owner: Tao Conrad
 - last_updated: 2026-03-11
-- status: working-draft
-
+- status: reviewed
+- reviewed_by: Tao Conrad
+- reviewed_on: 2026-03-13
 ## Summary
 
 TAK-FLOW is strongest as a portfolio case study when framed as a high-density C2 prototype that treats uncertainty, provenance, replayability, and operator gating as product requirements rather than UI decoration.
@@ -47,12 +48,12 @@ Present TAK-FLOW as a high-assurance interface and simulation prototype. The str
 
 ## Evidence Links
 
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/README.md`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/playwright.config.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/tests/smoke.spec.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/.github/workflows/verification.yml`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/dist/index.html`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/DOMController.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/TrackManager.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayCapture.js`
-- `/Users/taoconrad/Dev/Experiment/FELLOWSHIP /TAK-FLOW/src/core/ReplayPlayer.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/README.md`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/playwright.config.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/tests/smoke.spec.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/.github/workflows/verification.yml`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/dist/index.html`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/DOMController.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/TrackManager.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayCapture.js`
+- `/Users/taoconrad/Dev/GitHub 4/TAK-FLOW/src/core/ReplayPlayer.js`

@@ -1,4 +1,5 @@
 import { store } from './Store.js';
+import { trainingPresets, getTrainingPreset, resolveDecoyProfile } from '../data/trainingPresets.js';
 
 export class DOMController {
     constructor(trackManager, opsLog) {
@@ -148,21 +149,43 @@ export class DOMController {
             btnScenarioLoad.addEventListener('click', () => {
                 const profile = document.getElementById('scenario-profile-select').value;
                 this.resetScenarioUiState();
+                this.clearTrainingPreset();
                 this.trackManager.resetScenario(profile);
                 this.trackManager.replayCapture?.start();
                 this.opsLog.addEntry('MODE', 'INSTRUCTOR', `FORCED SCENARIO PROFILE: [${profile.toUpperCase()}]`);
                 this.updateTrackTable();
             });
         }
-        
+
         const btnScenarioClear = document.getElementById('btn-scenario-clear');
         if (btnScenarioClear) {
             btnScenarioClear.addEventListener('click', () => {
                 this.resetScenarioUiState();
+                this.clearTrainingPreset();
                 this.trackManager.resetScenario('clear');
                 this.trackManager.replayCapture?.start();
                 this.opsLog.addEntry('MODE', 'SYSTEM', 'SCENARIO CLEARED (OPERATOR STANDBY)');
                 this.updateTrackTable();
+            });
+        }
+
+        // Instructor Training Presets (scenario + EW lay-down + decoy family)
+        const presetSelect = document.getElementById('training-preset-select');
+        if (presetSelect) {
+            presetSelect.replaceChildren();
+            trainingPresets.forEach((preset) => {
+                const option = document.createElement('option');
+                option.value = preset.id;
+                option.textContent = preset.label;
+                presetSelect.appendChild(option);
+            });
+        }
+
+        const btnPresetArm = document.getElementById('btn-preset-arm');
+        if (btnPresetArm) {
+            btnPresetArm.addEventListener('click', () => {
+                const preset = getTrainingPreset(presetSelect?.value);
+                if (preset) this.armTrainingPreset(preset);
             });
         }
 
@@ -404,6 +427,56 @@ export class DOMController {
         }
     }
 
+    clearTrainingPreset() {
+        store.set('trainingPreset', null);
+        const badge = document.getElementById('instructor-badge');
+        if (badge) {
+            badge.textContent = 'OFFLINE';
+            badge.className = 'panel-badge badge-warning';
+        }
+    }
+
+    armTrainingPreset(preset) {
+        this.resetScenarioUiState();
+        this.trackManager.resetScenario(preset.scenarioProfile);
+        this.trackManager.replayCapture?.start();
+
+        // RESET_STATE (from resetScenario) is queued first; the preset zone
+        // lay-down lands after it in worker message order.
+        this.trackManager.opforWorker?.postMessage({
+            type: 'SET_EW_ZONES',
+            zones: preset.ewZones.map((zone) => ({ ...zone }))
+        });
+
+        if (preset.decoy) {
+            const profile = resolveDecoyProfile(preset.decoy.profileId);
+            const prior = store.get('decoySim') || { burstCount: 0 };
+            store.set('decoySim', {
+                running: true,
+                activeDecoys: new Array(preset.decoy.count).fill({
+                    ssid: `PRESET-${preset.id}`, mac: '00:00:00', channel: '01'
+                }),
+                burstCount: (prior.burstCount || 0) + 1,
+                profileId: profile?.id || preset.decoy.profileId,
+                ghost: profile?.ghost ? { ...profile.ghost } : null
+            });
+        } else {
+            const prior = store.get('decoySim');
+            if (prior?.running) {
+                store.set('decoySim', { running: false, activeDecoys: [], burstCount: prior.burstCount || 0 });
+            }
+        }
+
+        store.set('trainingPreset', preset.id);
+        const badge = document.getElementById('instructor-badge');
+        if (badge) {
+            badge.textContent = 'ARMED';
+            badge.className = 'panel-badge badge-live';
+        }
+        this.opsLog.addEntry('MODE', 'INSTRUCTOR', `TRAINING PRESET ARMED: [${preset.id}] ${preset.description}`, 1, 60);
+        this.updateTrackTable();
+    }
+
     resetScenarioUiState() {
         this.destinationMode = false;
         store.set('selectedTrackId', null);
@@ -507,7 +580,7 @@ export class DOMController {
         } else {
             const brg = (Math.atan2(track.x, track.y) * 180 / Math.PI + 360) % 360;
             const rng = Math.sqrt(track.x * track.x + track.y * track.y).toFixed(1);
-            document.getElementById('at-kinematics').textContent = `${brg.toFixed(0).padStart(3,'0')}° / ${rng}km / ${track.spd}kt`;
+            document.getElementById('at-kinematics').textContent = `${brg.toFixed(0).padStart(3,'0')}° / ${rng}km / ${Math.round(track.spd)}kt`;
             document.getElementById('at-source').textContent = prov.source;
             
             const confEl = document.getElementById('at-confidence');
@@ -542,8 +615,10 @@ export class DOMController {
     updateTrackTable() {
         if(!this.tbody) return;
         this.tbody.replaceChildren();
-        
-        const selectedTrackId = store.get('selectedTrackId');
+
+        // In replay mode the highlighted row follows the snapshot's captured
+        // selection, not the live store selection (AUDIT F1).
+        const selectedTrackId = this.trackManager.getRenderSelectedTrackId(store.get('selectedTrackId'));
         
         let tracks = this.trackManager.getTrackData();
         
@@ -632,7 +707,7 @@ export class DOMController {
             const rangeCell = document.createElement('td');
             rangeCell.textContent = `${rng}km`;
             const speedCell = document.createElement('td');
-            speedCell.textContent = String(t.spd);
+            speedCell.textContent = String(Math.round(t.spd));
 
             const trustCell = document.createElement('td');
             const trustWrap = document.createElement('span');
@@ -844,7 +919,7 @@ export class DOMController {
         if (isCritical) {
             if (!wasCritical && !isReplay) {
                 this.vjepaGateOnsetMs = Date.now() - (this.trackManager.replayCapture?.startTimestamp || Date.now());
-                this.trackManager.replayCapture?.captureEvent('VEJPA_ONSET');
+                this.trackManager.replayCapture?.captureEvent('V_JEPA_ONSET');
                 this.trackManager.replayCapture?.captureEvent('RECOMMENDED_ACTION_SUPERSESSION');
             }
             if (!this.vjepaWarningLogged && !isReplay) {
@@ -858,7 +933,7 @@ export class DOMController {
                 this.vjepaWarningLogged = true;
             }
         } else {
-            if (wasCritical && !isReplay) this.trackManager.replayCapture?.captureEvent('VEJPA_CLEAR');
+            if (wasCritical && !isReplay) this.trackManager.replayCapture?.captureEvent('V_JEPA_CLEAR');
             this.vjepaGateOnsetMs = null;
             this.vjepaWarningLogged = false;
             this.vjepaHoverActive = false;
@@ -877,8 +952,9 @@ export class DOMController {
         if (!snapshot) return;
         this.renderTelemetrySnapshot(snapshot.orderParams || {});
 
-        this.vjepaWarningActive = Boolean(snapshot.vejpaGate?.active);
-        this.vjepaGateOnsetMs = snapshot.vejpaGate?.onset ?? null;
+        const restoredGate = snapshot.vjepaGate ?? snapshot.vejpaGate; // legacy replays
+        this.vjepaWarningActive = Boolean(restoredGate?.active);
+        this.vjepaGateOnsetMs = restoredGate?.onset ?? null;
         this.vjepaWarningLogged = this.vjepaWarningActive;
         this.vjepaHoverActive = Boolean(snapshot.uiState?.vjepaHoverActive);
         this.vjepaAnchor = this.vjepaWarningActive ? this.getVjepaAnchor(snapshot.orderParams || {}) : null;
@@ -901,14 +977,21 @@ export class DOMController {
                 this.opsLog.feedEl.appendChild(entry);
             });
         }
+
+        // AUDIT F1: Track Log row highlight and the active-track panel follow
+        // the snapshot's captured selection while scrubbing.
+        this.updateTrackTable();
+        const replaySelectedId = this.trackManager.getRenderSelectedTrackId(store.get('selectedTrackId'));
+        this.updateActiveTrackPanel(replaySelectedId ? this.trackManager.getTrackById(replaySelectedId) : null);
     }
 
     restoreLiveState(snapshot) {
         const uiState = snapshot?.uiState || {};
         const selectedTrackId = uiState.selectedTrackId || null;
         this.replayLogEntries = [];
-        this.vjepaWarningActive = Boolean(snapshot?.vejpaGate?.active);
-        this.vjepaGateOnsetMs = snapshot?.vejpaGate?.onset ?? null;
+        const liveGate = snapshot?.vjepaGate ?? snapshot?.vejpaGate; // legacy replays
+        this.vjepaWarningActive = Boolean(liveGate?.active);
+        this.vjepaGateOnsetMs = liveGate?.onset ?? null;
         this.vjepaWarningLogged = this.vjepaWarningActive;
         this.vjepaHoverActive = Boolean(uiState.vjepaHoverActive);
         this.vjepaAnchor = this.vjepaWarningActive ? this.getVjepaAnchor(snapshot?.orderParams || {}) : null;
